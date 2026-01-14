@@ -16,6 +16,7 @@ export const children = sqliteTable("children", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   birthDate: text("birth_date").notNull(), // ISO date string
+  sex: text("sex", { enum: ["male", "female", "other"] }),
   userId: text("user_id").notNull().references(() => users.id),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });

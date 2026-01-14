@@ -5,6 +5,7 @@ import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { SignOutButton } from "@/components/SignOutButton";
 import { PartnerLinkForm } from "./PartnerLinkForm";
+import { ChildrenManager } from "./ChildrenManager";
 import Link from "next/link";
 
 export default async function SettingsPage() {
@@ -75,6 +76,16 @@ export default async function SettingsPage() {
             <PartnerLinkForm />
           )}
         </section>
+
+        {/* Children Section - Only show for primary planners */}
+        {session.user.role === "primary_planner" && (
+          <section className="bg-white p-4 rounded-xl border border-gray-200">
+            <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-3">
+              Your Children
+            </h2>
+            <ChildrenManager />
+          </section>
+        )}
 
         {/* Navigation */}
         <Link
