@@ -1,61 +1,168 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
-// Users table
-export const users = sqliteTable("users", {
-  id: text("id").primaryKey(),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
-  name: text("name"),
-  role: text("role", { enum: ["primary_planner", "copilot"] }).notNull(),
-  partnerId: text("partner_id"), // Self-reference handled at app level
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
-
-// Children table (for age-based AI suggestions)
-export const children = sqliteTable("children", {
-  id: text("id").primaryKey(),
+// =============================================================================
+// Kids
+// =============================================================================
+// One row per kid. `notes` is free-form context fed into LLM prompts.
+export const kids = sqliteTable("kids", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
-  birthDate: text("birth_date").notNull(), // ISO date string
-  sex: text("sex", { enum: ["male", "female", "other"] }),
-  userId: text("user_id").notNull().references(() => users.id),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  dob: text("dob").notNull(), // ISO date YYYY-MM-DD
+  pediatrician: text("pediatrician"),
+  daycare: text("daycare"),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
-// Brain dumps from primary planner
-export const brainDumps = sqliteTable("brain_dumps", {
-  id: text("id").primaryKey(),
-  userId: text("user_id").notNull().references(() => users.id),
-  content: text("content").notNull(),
-  type: text("type", { enum: ["text", "voice"] }).notNull().default("text"),
-  voiceUrl: text("voice_url"), // If voice note, URL to audio file
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+// =============================================================================
+// Measurements (append-only — trajectory is the signal)
+// =============================================================================
+// Numeric measurements only. Clothing sizes are stored as months
+// (e.g. 24 = "2T", 36 = "3T"). Convention documented in README.
+export const MEASUREMENT_TYPES = [
+  "weight_kg",
+  "height_cm",
+  "head_circ_cm",
+  "shoe_size_us",
+  "clothing_size_months",
+] as const;
+export type MeasurementType = (typeof MEASUREMENT_TYPES)[number];
+
+export const measurements = sqliteTable(
+  "measurements",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    kidId: integer("kid_id")
+      .notNull()
+      .references(() => kids.id),
+    type: text("type", { enum: MEASUREMENT_TYPES }).notNull(),
+    value: real("value").notNull(),
+    unit: text("unit").notNull(), // matches/clarifies the type's implied unit
+    measuredOn: text("measured_on").notNull(), // ISO date
+    source: text("source"), // 'pediatrician' | 'home' | 'manual' | etc.
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    kidTypeIdx: index("measurements_kid_type_idx").on(t.kidId, t.type),
+    measuredOnIdx: index("measurements_measured_on_idx").on(t.measuredOn),
+  }),
+);
+
+// =============================================================================
+// Events (append-only — facts in the family record)
+// =============================================================================
+// `gear_purchase` is the most important type for the Outgrowing engine —
+// `metadata` should include item details (e.g. {"item":"shoes","brand":"Stride Rite","size":8}).
+export const EVENT_TYPES = [
+  "well_visit",
+  "vaccine",
+  "milestone",
+  "gear_purchase",
+  "illness",
+  "note",
+] as const;
+export type EventType = (typeof EVENT_TYPES)[number];
+
+export const events = sqliteTable(
+  "events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    kidId: integer("kid_id")
+      .notNull()
+      .references(() => kids.id),
+    type: text("type", { enum: EVENT_TYPES }).notNull(),
+    occurredOn: text("occurred_on").notNull(), // ISO date
+    description: text("description"),
+    metadata: text("metadata", { mode: "json" }).$type<Record<string, unknown>>(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    kidTypeIdx: index("events_kid_type_idx").on(t.kidId, t.type),
+    occurredOnIdx: index("events_occurred_on_idx").on(t.occurredOn),
+  }),
+);
+
+// =============================================================================
+// Briefs (Sunday-morning weekly briefing)
+// =============================================================================
+export const briefs = sqliteTable("briefs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  generatedAt: text("generated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  weekOf: text("week_of").notNull(), // ISO date — Sunday of the week
+  recipients: text("recipients", { mode: "json" }).$type<string[]>().notNull(),
 });
 
-// Daily digests generated for copilot parent
-export const digests = sqliteTable("digests", {
-  id: text("id").primaryKey(),
-  userId: text("user_id").notNull().references(() => users.id), // The copilot receiving this
-  date: text("date").notNull(), // ISO date string (YYYY-MM-DD)
-  recentMentions: text("recent_mentions").notNull(), // JSON string
-  considerThisWeek: text("consider_this_week").notNull(), // JSON string
-  comingUpSoon: text("coming_up_soon").notNull(), // JSON string
-  viewedAt: integer("viewed_at", { mode: "timestamp" }),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+// =============================================================================
+// BriefItems (the line items inside a brief)
+// =============================================================================
+// Provenance is mandatory — that's how we eval.
+export const TRIGGER_SOURCES = ["lookahead", "schedule", "seasonal"] as const;
+export type TriggerSource = (typeof TRIGGER_SOURCES)[number];
+
+export const CONFIDENCE_LEVELS = ["high", "medium", "low"] as const;
+export type ConfidenceLevel = (typeof CONFIDENCE_LEVELS)[number];
+
+export const briefItems = sqliteTable(
+  "brief_items",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    briefId: integer("brief_id")
+      .notNull()
+      .references(() => briefs.id),
+    kidId: integer("kid_id").references(() => kids.id), // nullable: family-level items
+    headline: text("headline").notNull(),
+    body: text("body").notNull(),
+    suggestedAction: text("suggested_action"),
+    triggerSource: text("trigger_source", { enum: TRIGGER_SOURCES }).notNull(),
+    triggerDetail: text("trigger_detail"), // sub-category, e.g. "outgrowing" or "developmental"
+    reasoning: text("reasoning").notNull(), // why this item fired (for eval + R2 trust)
+    confidence: text("confidence", { enum: CONFIDENCE_LEVELS }).notNull(),
+    priority: integer("priority").notNull(),
+  },
+  (t) => ({
+    briefIdx: index("brief_items_brief_idx").on(t.briefId),
+  }),
+);
+
+// =============================================================================
+// Feedback (per-item ratings — drives Stage 2 eval, post-MVP)
+// =============================================================================
+export const FEEDBACK_RATINGS = [
+  "hit",
+  "handled",
+  "irrelevant",
+  "surprise",
+] as const;
+export type FeedbackRating = (typeof FEEDBACK_RATINGS)[number];
+
+export const feedback = sqliteTable("feedback", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  briefItemId: integer("brief_item_id")
+    .notNull()
+    .references(() => briefItems.id),
+  rating: text("rating", { enum: FEEDBACK_RATINGS }).notNull(),
+  note: text("note"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
-// Track which digest items led to conversations (success metric)
-export const conversations = sqliteTable("conversations", {
-  id: text("id").primaryKey(),
-  digestId: text("digest_id").references(() => digests.id),
-  topic: text("topic").notNull(),
-  hadConversation: integer("had_conversation", { mode: "boolean" }).notNull().default(false),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+// =============================================================================
+// Type exports for app code
+// =============================================================================
+export type Kid = typeof kids.$inferSelect;
+export type NewKid = typeof kids.$inferInsert;
 
-// Types for TypeScript
-export type User = typeof users.$inferSelect;
-export type NewUser = typeof users.$inferInsert;
-export type BrainDump = typeof brainDumps.$inferSelect;
-export type NewBrainDump = typeof brainDumps.$inferInsert;
-export type Digest = typeof digests.$inferSelect;
-export type Child = typeof children.$inferSelect;
+export type Measurement = typeof measurements.$inferSelect;
+export type NewMeasurement = typeof measurements.$inferInsert;
+
+export type Event = typeof events.$inferSelect;
+export type NewEvent = typeof events.$inferInsert;
+
+export type Brief = typeof briefs.$inferSelect;
+export type NewBrief = typeof briefs.$inferInsert;
+
+export type BriefItem = typeof briefItems.$inferSelect;
+export type NewBriefItem = typeof briefItems.$inferInsert;
+
+export type Feedback = typeof feedback.$inferSelect;
+export type NewFeedback = typeof feedback.$inferInsert;
