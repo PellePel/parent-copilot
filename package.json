@@ -9,6 +9,7 @@
     "log-measurement": "tsx src/cli/log-measurement.ts",
     "log-event": "tsx src/cli/log-event.ts",
     "seed": "tsx src/cli/seed.ts",
+    "generate-brief": "tsx src/cli/generate-brief.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
