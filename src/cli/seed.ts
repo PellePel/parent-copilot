@@ -1,8 +1,8 @@
 /**
- * Seed Clem and Jude with placeholder data so the engineering check has
- * something to round-trip. The DOBs and measurements below are PLACEHOLDERS
- * loosely calibrated to the PRD ("Clem ~2.5 years, Jude ~6 months"); update
- * them with real numbers before relying on the brief.
+ * Seed Clem and Jude. DOBs are real; measurements and the well-visit
+ * event are still rough example values intended for the engineering
+ * check — replace with real numbers via the log-measurement and
+ * log-event CLIs before relying on the brief.
  *
  * Idempotent on re-run: if any kids exist, this script no-ops with a notice.
  */
@@ -22,7 +22,7 @@ const clem = db
   .insert(kids)
   .values({
     name: "Clem",
-    dob: "2023-11-22", // PLACEHOLDER — replace with real DOB
+    dob: "2024-01-18",
     notes: "Toddler. Currently in 3T clothes.",
   })
   .returning()
@@ -32,7 +32,7 @@ const jude = db
   .insert(kids)
   .values({
     name: "Jude",
-    dob: "2025-11-22", // PLACEHOLDER — replace with real DOB
+    dob: "2025-12-07",
     notes: "Infant. Approaching 6-month well-visit window.",
   })
   .returning()
@@ -109,7 +109,8 @@ db.insert(events)
 console.log(`Seeded:
   - ${clem.name} (id=${clem.id}, dob=${clem.dob})
   - ${jude.name} (id=${jude.id}, dob=${jude.dob})
-  with starter measurements and one gear-purchase event each.
+  with example measurements and one gear-purchase event each.
 
-These are PLACEHOLDER values — update DOBs and measurements with real numbers
-before the brief becomes meaningful.`);
+DOBs are real; the measurements and well-visit event are still example
+values — update them via log-measurement and log-event before the brief
+becomes meaningful.`);
