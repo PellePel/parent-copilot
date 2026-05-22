@@ -104,3 +104,117 @@ export function expectedClothingSizeMonths(ageMonths: number): number {
   if (ageMonths < 48) return 48; // 4T
   return 60; // 5T+
 }
+
+// =============================================================================
+// Weight-gain rates (carseat outgrowing prediction)
+// =============================================================================
+// Used to project when a kid will hit their carseat's weight limit. Individual
+// growth varies widely (±50%); these are planning estimates, not forecasts.
+// Engine outputs explicitly defer to the seat's manual.
+
+export type WeightGainBand = {
+  ageMonthsMin: number;
+  ageMonthsMax: number;
+  kgPerWeek: number;
+};
+
+// Rates calibrated to WHO 50th-percentile boys' growth chart (delta in
+// median weight between band endpoints, expressed as kg/week). These are
+// medians, not maxes — a kid tracking on the 90th percentile gains faster,
+// and a kid on the 10th gains slower. Engine output should acknowledge this.
+export const WEIGHT_GAIN_BANDS: WeightGainBand[] = [
+  { ageMonthsMin: 0, ageMonthsMax: 6, kgPerWeek: 0.17 },
+  { ageMonthsMin: 6, ageMonthsMax: 12, kgPerWeek: 0.07 },
+  { ageMonthsMin: 12, ageMonthsMax: 24, kgPerWeek: 0.05 },
+  { ageMonthsMin: 24, ageMonthsMax: 60, kgPerWeek: 0.04 },
+];
+
+export const WEIGHT_GAIN_KB = {
+  source:
+    "WHO 50th-percentile boys growth chart medians. Individual kids vary ±2 percentile bands either way; treat as a planning estimate, not a forecast.",
+};
+
+export function weightGainBandForAge(ageMonths: number): WeightGainBand | null {
+  return (
+    WEIGHT_GAIN_BANDS.find(
+      (b) => ageMonths >= b.ageMonthsMin && ageMonths < b.ageMonthsMax,
+    ) ?? null
+  );
+}
+
+const WEEKS_PER_MONTH = 4.345;
+
+/**
+ * Walk forward through the age bands, applying the correct gain rate within
+ * each. Single-band projection systematically underestimates infant growth
+ * because rates drop sharply with age; per-band projection is more honest.
+ */
+export function projectWeightForward(
+  startKg: number,
+  startAgeMonths: number,
+  weeksElapsed: number,
+): number {
+  if (weeksElapsed <= 0) return startKg;
+  let kg = startKg;
+  let age = startAgeMonths;
+  let remaining = weeksElapsed;
+  while (remaining > 0) {
+    const band = weightGainBandForAge(age);
+    if (!band) {
+      // Past the last modeled band — taper using the slowest band's rate.
+      const fallback = WEIGHT_GAIN_BANDS[WEIGHT_GAIN_BANDS.length - 1]!;
+      kg += fallback.kgPerWeek * remaining;
+      break;
+    }
+    const weeksUntilBandEnd = (band.ageMonthsMax - age) * WEEKS_PER_MONTH;
+    const weeksInThisBand = Math.min(remaining, weeksUntilBandEnd);
+    kg += band.kgPerWeek * weeksInThisBand;
+    age += weeksInThisBand / WEEKS_PER_MONTH;
+    remaining -= weeksInThisBand;
+  }
+  return kg;
+}
+
+/**
+ * Weeks from (startKg, startAgeMonths) until projected weight reaches targetKg.
+ * Returns 0 if already there or above; null if target isn't reachable within
+ * the modeled age range (5-year horizon).
+ */
+export function weeksUntilTargetWeight(
+  startKg: number,
+  startAgeMonths: number,
+  targetKg: number,
+): number | null {
+  if (targetKg <= startKg) return 0;
+  let kg = startKg;
+  let age = startAgeMonths;
+  let totalWeeks = 0;
+  const MAX_HORIZON_WEEKS = 52 * 5;
+  while (totalWeeks < MAX_HORIZON_WEEKS) {
+    const band = weightGainBandForAge(age);
+    if (!band) return null;
+    const weeksUntilBandEnd = (band.ageMonthsMax - age) * WEEKS_PER_MONTH;
+    const gap = targetKg - kg;
+    const weeksAtThisRate = gap / band.kgPerWeek;
+    if (weeksAtThisRate <= weeksUntilBandEnd) {
+      return totalWeeks + weeksAtThisRate;
+    }
+    kg += band.kgPerWeek * weeksUntilBandEnd;
+    age = band.ageMonthsMax;
+    totalWeeks += weeksUntilBandEnd;
+  }
+  return null;
+}
+
+// =============================================================================
+// Carseat outgrowing thresholds
+// =============================================================================
+
+export const CARSEAT_OUTGROWING = {
+  /** How far ahead (in weeks) we look for the limit before flagging. */
+  flagWithinWeeks: 12,
+  /** Under this many weeks until the limit, escalate to high confidence. */
+  highConfidenceWithinWeeks: 4,
+  source:
+    "Conservative window — seat manufacturers recommend transitioning when EITHER weight or height limit is approached. Engine only models weight; the suggested action always defers to the seat's manual.",
+};

@@ -18,8 +18,12 @@ import {
 } from "../db/schema.js";
 import { ageInMonths, daysBetween, formatAge, todayIso } from "../age.js";
 import {
+  CARSEAT_OUTGROWING,
   CLOTHING_OUTGROWING,
+  WEIGHT_GAIN_KB,
+  projectWeightForward,
   shoeBandForAge,
+  weeksUntilTargetWeight,
 } from "../kb/outgrowing.js";
 import type { Candidate } from "./types.js";
 
@@ -165,6 +169,139 @@ function nextSizeUp(months: number): number {
 }
 
 // =============================================================================
+// Carseat
+// =============================================================================
+// Reads the most recent gear_purchase event where metadata.item === "carseat"
+// and uses metadata.weight_limit_kg as the upper bound. Projects forward from
+// the latest weight_kg measurement using the KB's age-banded weight-gain rate.
+//
+// Safety posture (R2): only fires within a conservative 12-week window. The
+// body always defers to the seat's manual.
+
+type CarseatRecord = {
+  occurredOn: string;
+  description: string | null;
+  weightLimitKg: number;
+  model?: string;
+};
+
+function latestCarseat(kidId: number): CarseatRecord | null {
+  const rows = db
+    .select()
+    .from(events)
+    .where(and(eq(events.kidId, kidId), eq(events.type, "gear_purchase")))
+    .orderBy(desc(events.occurredOn))
+    .all();
+  for (const r of rows) {
+    const meta = r.metadata as Record<string, unknown> | null;
+    const item = typeof meta?.item === "string" ? meta.item.toLowerCase() : "";
+    if (item !== "carseat" && item !== "car_seat" && item !== "car seat") continue;
+    const limit = meta?.weight_limit_kg;
+    if (typeof limit !== "number") continue;
+    return {
+      occurredOn: r.occurredOn,
+      description: r.description,
+      weightLimitKg: limit,
+      model: typeof meta?.model === "string" ? meta.model : undefined,
+    };
+  }
+  return null;
+}
+
+function latestWeightKg(kidId: number): { value: number; measuredOn: string } | null {
+  const row = db
+    .select()
+    .from(measurements)
+    .where(and(eq(measurements.kidId, kidId), eq(measurements.type, "weight_kg")))
+    .orderBy(desc(measurements.measuredOn))
+    .limit(1)
+    .get();
+  return row ? { value: row.value, measuredOn: row.measuredOn } : null;
+}
+
+export function carseatOutgrowingCandidate(
+  kid: Kid,
+  asOf: string = todayIso(),
+): Candidate | null {
+  const seat = latestCarseat(kid.id);
+  if (!seat) return null;
+
+  const latestWeight = latestWeightKg(kid.id);
+  if (!latestWeight) return null;
+
+  // Project the kid's weight from the measurement date forward through every
+  // age band between then and asOf — single-band projection systematically
+  // underestimates infant growth and led to false-negative carseat misses.
+  const ageAtMeasurement = ageInMonths(kid.dob, latestWeight.measuredOn);
+  const ageNowMonths = ageInMonths(kid.dob, asOf);
+  const weeksSinceWeighed = Math.max(0, daysBetween(latestWeight.measuredOn, asOf) / 7);
+  const projectedKg = projectWeightForward(latestWeight.value, ageAtMeasurement, weeksSinceWeighed);
+
+  const seatLabel = seat.model ?? "carseat";
+  const measurementStaleWeeks = Math.round(weeksSinceWeighed);
+  const staleNote =
+    measurementStaleWeeks >= 8
+      ? ` Note: weight measurement is ${measurementStaleWeeks} weeks old — confidence drops with stale data.`
+      : "";
+
+  // Already at or over the projected limit → highest priority.
+  if (projectedKg >= seat.weightLimitKg) {
+    return {
+      kidId: kid.id,
+      headline: `${kid.name} is at or over the carseat weight limit`,
+      body:
+        `${kid.name}'s last weight was ${latestWeight.value} kg on ${latestWeight.measuredOn}; ` +
+        `projecting through age bands forward from then, they're around ` +
+        `${projectedKg.toFixed(1)} kg today. The ${seatLabel} is rated to ${seat.weightLimitKg} kg.${staleNote}`,
+      suggestedAction:
+        "Confirm against the seat's manual — check both the weight AND height limits, plus the expiration date — and plan the transition this week.",
+      triggerSource: "lookahead",
+      triggerDetail: "outgrowing:carseat",
+      reasoning:
+        `Carseat from ${seat.occurredOn} has weight_limit_kg=${seat.weightLimitKg}. ` +
+        `Latest weight=${latestWeight.value}kg on ${latestWeight.measuredOn} (kid was ` +
+        `${ageAtMeasurement}mo). Projected via per-band walk over ${weeksSinceWeighed.toFixed(1)} ` +
+        `weeks to ${projectedKg.toFixed(2)}kg at ${ageNowMonths}mo. KB source: ${WEIGHT_GAIN_KB.source}`,
+      confidence: "high",
+      rawScore: 95,
+    };
+  }
+
+  const weeksToLimit = weeksUntilTargetWeight(projectedKg, ageNowMonths, seat.weightLimitKg);
+  if (weeksToLimit === null) return null;
+  if (weeksToLimit > CARSEAT_OUTGROWING.flagWithinWeeks) return null;
+
+  const isImminent = weeksToLimit <= CARSEAT_OUTGROWING.highConfidenceWithinWeeks;
+  const confidence = isImminent ? "high" : "medium";
+  const rawScore = isImminent ? 85 : 65;
+
+  return {
+    kidId: kid.id,
+    headline: isImminent
+      ? `${kid.name} is approaching the carseat weight limit`
+      : `${kid.name} will likely outgrow the carseat within ${Math.round(weeksToLimit)} weeks`,
+    body:
+      `${kid.name}'s last weight was ${latestWeight.value} kg on ${latestWeight.measuredOn}. ` +
+      `Projecting forward through age-banded weight-gain rates, they're around ` +
+      `${projectedKg.toFixed(1)} kg today at ${formatAge(kid.dob, asOf)} and tracking to hit the ` +
+      `${seatLabel}'s ${seat.weightLimitKg} kg limit in roughly ${Math.round(weeksToLimit)} weeks.${staleNote}`,
+    suggestedAction:
+      "Confirm against the seat's manual (weight AND height limits, plus expiration) and start looking at the next-stage seat now so you have time to compare.",
+    triggerSource: "lookahead",
+    triggerDetail: "outgrowing:carseat",
+    reasoning:
+      `Carseat from ${seat.occurredOn} has weight_limit_kg=${seat.weightLimitKg}. ` +
+      `Latest weight=${latestWeight.value}kg on ${latestWeight.measuredOn} (kid was ` +
+      `${ageAtMeasurement}mo). Projected via per-band walk over ${weeksSinceWeighed.toFixed(1)} ` +
+      `weeks to ${projectedKg.toFixed(2)}kg at ${ageNowMonths}mo. ` +
+      `weeksToLimit=${weeksToLimit.toFixed(1)} vs flag=${CARSEAT_OUTGROWING.flagWithinWeeks}wk ` +
+      `imminent=${CARSEAT_OUTGROWING.highConfidenceWithinWeeks}wk. KB source: ${WEIGHT_GAIN_KB.source}`,
+    confidence,
+    rawScore,
+  };
+}
+
+// =============================================================================
 // Public API: all outgrowing candidates for a kid
 // =============================================================================
 
@@ -174,6 +311,7 @@ export function outgrowingCandidatesFor(kid: Kid, asOf: string = todayIso()): Ca
   if (shoes) out.push(shoes);
   const clothing = clothingOutgrowingCandidate(kid, asOf);
   if (clothing) out.push(clothing);
-  // carseat() lands once the user provides Jude's seat info
+  const carseat = carseatOutgrowingCandidate(kid, asOf);
+  if (carseat) out.push(carseat);
   return out;
 }

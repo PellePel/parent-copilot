@@ -106,6 +106,24 @@ db.insert(events)
   })
   .run();
 
+// Jude's carseat — premium infant seat originally bought for Clem in 2023,
+// reused for Jude. Weight limit set to 15.9 kg / 35 lb as a stand-in for the
+// Nuna PIPA / UPPAbaby Mesa class; confirm against the actual seat manual.
+db.insert(events)
+  .values({
+    kidId: jude.id,
+    type: "gear_purchase",
+    occurredOn: "2023-05-22",
+    description: "Premium infant carseat (originally for Clem, reused for Jude)",
+    metadata: {
+      item: "carseat",
+      model: "Premium infant seat — confirm exact model in manual",
+      weight_limit_kg: 15.9,
+      notes: "PLACEHOLDER weight limit — Nuna PIPA RX / UPPAbaby Mesa class typically caps at 15.9 kg / 35 lb",
+    },
+  })
+  .run();
+
 console.log(`Seeded:
   - ${clem.name} (id=${clem.id}, dob=${clem.dob})
   - ${jude.name} (id=${jude.id}, dob=${jude.dob})
