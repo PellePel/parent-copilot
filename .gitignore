@@ -4,6 +4,10 @@
 # environment
 .env*
 
+# Google OAuth credentials and tokens — never commit
+/credentials.json
+/data/google-token.json
+
 # database
 /data/*.db
 /data/*.db-journal
