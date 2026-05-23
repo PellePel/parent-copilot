@@ -14,8 +14,10 @@ import { Command } from "commander";
 import { listKids } from "../lib/kids.js";
 import { outgrowingCandidatesFor } from "../lib/engine/outgrowing.js";
 import { developmentalCandidatesFor } from "../lib/engine/developmental.js";
+import { absenceCandidatesFor } from "../lib/engine/absence.js";
 import { assembleBrief } from "../lib/engine/assembler.js";
 import { renderConsole, renderMarkdown } from "../lib/engine/render.js";
+import { fetchUpcomingEvents, type CalendarEvent } from "../lib/calendar.js";
 import { isoDate, today } from "../lib/validators.js";
 import type { Candidate } from "../lib/engine/types.js";
 
@@ -52,10 +54,27 @@ if (kids.length === 0) {
   process.exit(1);
 }
 
+// Fetch calendar events once for the whole brief — feeds the absence engine.
+// Degrade gracefully when OAuth isn't set up yet.
+const calResult = await fetchUpcomingEvents(14, new Date(`${asOf}T00:00:00Z`));
+let upcomingEvents: CalendarEvent[] = [];
+if (calResult.status === "ok") {
+  upcomingEvents = calResult.events;
+  console.log(`Calendar: fetched ${upcomingEvents.length} event(s) over the next 14 days.`);
+} else if (calResult.status === "not_configured") {
+  console.warn(`Calendar: ${calResult.reason}`);
+  console.warn(`Calendar: absence detection will be skipped. Run \`npm run auth:google\` to enable.`);
+} else {
+  console.warn(`Calendar: error fetching events (${calResult.reason}). Absence detection skipped.`);
+}
+
 const candidates: Candidate[] = [];
 for (const kid of kids) {
   candidates.push(...outgrowingCandidatesFor(kid, asOf));
   candidates.push(...developmentalCandidatesFor(kid, asOf));
+  if (calResult.status === "ok") {
+    candidates.push(...absenceCandidatesFor(kid, upcomingEvents, asOf));
+  }
 }
 
 console.log(
