@@ -16,14 +16,13 @@
  * window) so newer windows beat stale ones at the same confidence level.
  */
 
-import { and, eq, gte, sql } from "drizzle-orm";
 import { ageInMonths, formatAge, todayIso } from "../age.js";
-import { db } from "../db/index.js";
-import { briefItems, briefs, type Kid } from "../db/schema.js";
+import { type Kid } from "../db/schema.js";
 import {
   activeDevelopmentalWindows,
   type DevelopmentalWindow,
 } from "../kb/developmental.js";
+import { firedInLast } from "./suppression.js";
 import type { Candidate } from "./types.js";
 
 const SUPPRESSION_WINDOW_WEEKS = 4;
@@ -38,33 +37,6 @@ const FRESHNESS_BONUS_MAX = 10;
 
 function applyTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (_, key) => vars[key] ?? `{${key}}`);
-}
-
-/**
- * Has this (kidId, triggerDetail) appeared in any brief whose weekOf is on
- * or after `asOf - weeksBack`?
- */
-function firedInLast(
-  kidId: number,
-  triggerDetail: string,
-  weeksBack: number,
-  asOf: string,
-): boolean {
-  const asOfMs = new Date(`${asOf}T00:00:00Z`).getTime();
-  const cutoff = new Date(asOfMs - weeksBack * 7 * 86_400_000).toISOString().slice(0, 10);
-  const row = db
-    .select({ n: sql<number>`count(*)` })
-    .from(briefItems)
-    .innerJoin(briefs, eq(briefItems.briefId, briefs.id))
-    .where(
-      and(
-        eq(briefItems.kidId, kidId),
-        eq(briefItems.triggerDetail, triggerDetail),
-        gte(briefs.weekOf, cutoff),
-      ),
-    )
-    .get();
-  return (row?.n ?? 0) > 0;
 }
 
 /**
