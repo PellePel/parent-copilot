@@ -15,6 +15,7 @@ import { listKids } from "../lib/kids.js";
 import { outgrowingCandidatesFor } from "../lib/engine/outgrowing.js";
 import { developmentalCandidatesFor } from "../lib/engine/developmental.js";
 import { absenceCandidatesFor } from "../lib/engine/absence.js";
+import { polishCandidates } from "../lib/engine/polish.js";
 import { assembleBrief } from "../lib/engine/assembler.js";
 import { renderConsole, renderMarkdown } from "../lib/engine/render.js";
 import { fetchUpcomingEvents, type CalendarEvent } from "../lib/calendar.js";
@@ -30,12 +31,14 @@ const program = new Command()
     "recipient(s) — repeat the flag for multiple. Defaults to LOCAL.",
   )
   .option("--dry-run", "skip DB persistence; print only", false)
+  .option("--no-polish", "skip the Claude prose-rewrite step")
   .parse(process.argv);
 
 const opts = program.opts<{
   date?: string;
   recipient?: string[];
   dryRun: boolean;
+  polish: boolean;
 }>();
 
 const asOf = opts.date ?? today();
@@ -99,8 +102,12 @@ if (opts.dryRun) {
   process.exit(0);
 }
 
-// 2. Assemble + persist.
-const assembled = assembleBrief(candidates, { weekOfIso: asOf, recipients });
+// 2. Assemble (select + optionally polish via Claude + persist).
+const assembled = await assembleBrief(candidates, {
+  weekOfIso: asOf,
+  recipients,
+  polish: opts.polish ? polishCandidates : undefined,
+});
 
 // 3. Console output.
 console.log("");

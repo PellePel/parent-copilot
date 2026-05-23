@@ -4,7 +4,7 @@ A weekly anticipation engine for parenting mental load. See [PRD.md](./PRD.md) f
 
 V1 ships as a Sunday-morning briefing emailed to both parents, driven by a Lookahead engine that cross-references each kid's age, recent measurements, gear-purchase events, developmental knowledge, and the family calendar.
 
-Current status: **Phase 2c** — Lookahead engine with three signal sources (outgrowing, developmental windows, calendar-absence detection) feeding a brief. No email yet; brief prints to console + writes to `briefs/YYYY-MM-DD.md`.
+Current status: **Phase 2 complete** — Lookahead engine with three signal sources (outgrowing, developmental windows, calendar-absence detection) feeding a brief, with optional Claude prose-rewrite. No email yet; brief prints to console + writes to `briefs/YYYY-MM-DD.md`.
 
 ## Stack
 
@@ -22,7 +22,17 @@ npm run db:push   # create the SQLite file and tables at ./data/copilot.db
 npm run seed      # add Clem and Jude with starter data
 ```
 
-Then optionally set up Google Calendar (see below).
+Then optionally set up Google Calendar (see below) and an Anthropic API key.
+
+### Anthropic API key (optional)
+
+The brief polishes engine-templated text through Claude into a more conversational voice. Set `ANTHROPIC_API_KEY` in your environment to enable:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+If unset, the brief still works — it just uses the raw engine-templated text and logs a one-line warning. You can also skip the polish step explicitly with `--no-polish`.
 
 ## Generating a brief
 
@@ -30,6 +40,7 @@ Then optionally set up Google Calendar (see below).
 npm run generate-brief                          # for today
 npm run generate-brief -- --date 2026-06-30     # for a specific Sunday
 npm run generate-brief -- --dry-run             # rank candidates without persisting
+npm run generate-brief -- --no-polish           # skip the Claude rewrite step
 ```
 
 Briefs are persisted to the `briefs` and `brief_items` tables, and a markdown mirror is written to `briefs/YYYY-MM-DD.md` (gitignored — DB is the canonical record).

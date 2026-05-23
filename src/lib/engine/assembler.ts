@@ -44,14 +44,15 @@ function dedupKey(c: Candidate): string {
   return `${c.kidId ?? "family"}|${c.triggerDetail}`;
 }
 
-export function assembleBrief(
-  candidates: Candidate[],
-  options: {
-    weekOfIso?: string;
-    recipients: string[];
-  },
-): AssembledBrief {
-  // Dedup: keep highest rawScore per (kidId, triggerDetail).
+/**
+ * Dedup by (kidId, triggerDetail) keeping the highest rawScore, then rank by
+ * (rawScore desc, then confidence desc), then cap at MAX_ITEMS.
+ * Pure function — no DB access.
+ */
+export function selectCandidates(candidates: Candidate[]): {
+  kept: Candidate[];
+  dropped: Candidate[];
+} {
   const winners = new Map<string, Candidate>();
   const dropped: Candidate[] = [];
   for (const c of candidates) {
@@ -66,31 +67,35 @@ export function assembleBrief(
       dropped.push(c);
     }
   }
-
-  // Rank by rawScore desc, then by confidence (high > medium > low).
   const confidenceRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
   const ranked = [...winners.values()].sort((a, b) => {
     if (b.rawScore !== a.rawScore) return b.rawScore - a.rawScore;
     return confidenceRank[b.confidence]! - confidenceRank[a.confidence]!;
   });
-
   const kept = ranked.slice(0, MAX_ITEMS);
   for (const c of ranked.slice(MAX_ITEMS)) dropped.push(c);
+  return { kept, dropped };
+}
 
+/** Persist already-selected candidates as a brief + brief_items in one txn. */
+export function persistBrief(
+  kept: Candidate[],
+  options: {
+    weekOfIso?: string;
+    recipients: string[];
+    dropped?: Candidate[];
+  },
+): AssembledBrief {
   const weekOf = sundayOf(options.weekOfIso ?? new Date().toISOString().slice(0, 10));
-
-  // Persist in a transaction so a brief never exists without its items.
   const result = db.transaction((tx) => {
     const brief = tx
       .insert(briefs)
       .values({ weekOf, recipients: options.recipients })
       .returning()
       .get();
-
     if (kept.length === 0) {
       return { brief, items: [] as BriefItem[] };
     }
-
     const items = tx
       .insert(briefItems)
       .values(
@@ -111,8 +116,28 @@ export function assembleBrief(
       .all();
     return { brief, items };
   });
+  return { ...result, dropped: options.dropped ?? [] };
+}
 
-  return { ...result, dropped };
+/**
+ * Convenience wrapper: select + (optionally polish) + persist. Polish runs
+ * AFTER selection so it only spends tokens on the items we'll actually keep.
+ */
+export async function assembleBrief(
+  candidates: Candidate[],
+  options: {
+    weekOfIso?: string;
+    recipients: string[];
+    polish?: (kept: Candidate[]) => Promise<Candidate[]>;
+  },
+): Promise<AssembledBrief> {
+  const { kept, dropped } = selectCandidates(candidates);
+  const finalKept = options.polish ? await options.polish(kept) : kept;
+  return persistBrief(finalKept, {
+    weekOfIso: options.weekOfIso,
+    recipients: options.recipients,
+    dropped,
+  });
 }
 
 export { MIN_ITEMS, MAX_ITEMS };
