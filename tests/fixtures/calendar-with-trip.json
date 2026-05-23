@@ -1,0 +1,25 @@
+[
+  {
+    "id": "evt-maine-trip",
+    "summary": "Trip to Maine - beach week",
+    "start": "2026-06-08",
+    "end": "2026-06-14",
+    "location": "Bar Harbor, ME",
+    "description": "Family vacation. Rental cottage on the water."
+  },
+  {
+    "id": "evt-jude-6mo",
+    "summary": "Jude pediatrician — 6-month well-visit",
+    "start": "2026-06-04T09:00:00-04:00",
+    "end": "2026-06-04T10:00:00-04:00",
+    "description": "Dr. Smith"
+  },
+  {
+    "id": "evt-sarahs-bday",
+    "summary": "Sarah's 4th birthday party",
+    "start": "2026-06-01T14:00:00-04:00",
+    "end": "2026-06-01T16:00:00-04:00",
+    "location": "Pump It Up",
+    "description": "Sarah is Clem's friend from preschool"
+  }
+]
