@@ -13,6 +13,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { Command } from "commander";
 import { listKids } from "../lib/kids.js";
 import { outgrowingCandidatesFor } from "../lib/engine/outgrowing.js";
+import { developmentalCandidatesFor } from "../lib/engine/developmental.js";
 import { assembleBrief } from "../lib/engine/assembler.js";
 import { renderConsole, renderMarkdown } from "../lib/engine/render.js";
 import { isoDate, today } from "../lib/validators.js";
@@ -54,6 +55,7 @@ if (kids.length === 0) {
 const candidates: Candidate[] = [];
 for (const kid of kids) {
   candidates.push(...outgrowingCandidatesFor(kid, asOf));
+  candidates.push(...developmentalCandidatesFor(kid, asOf));
 }
 
 console.log(
