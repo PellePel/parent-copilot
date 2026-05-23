@@ -4,7 +4,9 @@ A weekly anticipation engine for parenting mental load. See [PRD.md](./PRD.md) f
 
 V1 ships as a Sunday-morning briefing emailed to both parents, driven by a Lookahead engine that cross-references each kid's age, recent measurements, gear-purchase events, developmental knowledge, and the family calendar.
 
-Current status: **Phase 2 complete** — Lookahead engine with three signal sources (outgrowing, developmental windows, calendar-absence detection) feeding a brief, with optional Claude prose-rewrite. No email yet; brief prints to console + writes to `briefs/YYYY-MM-DD.md`.
+Current status: **Phase 2 complete** — Lookahead engine with four signal sources (outgrowing, developmental windows, calendar-absence detection, Claude-reasoned calendar cross-products) feeding a brief, with optional Claude prose-rewrite. No email yet; brief prints to console + writes to `briefs/YYYY-MM-DD.md`.
+
+The "uncanny" items (the Maine-trip → swim-diapers pattern) come from the cross-products engine — it sends Claude each kid's current state + upcoming calendar events and asks for the residual items the dedicated engines wouldn't surface.
 
 ## Stack
 
@@ -116,7 +118,9 @@ src/
       outgrowing.ts    # shoes, clothing, carseat outgrowing predictions
       developmental.ts # developmental-window candidates
       absence.ts       # calendar-absence detection for well-visits
-      assembler.ts     # rank + dedup + persist
+      cross_products.ts# Claude reasons across calendar + family state
+      polish.ts        # Claude prose rewrite (voice consistency)
+      assembler.ts     # select + (optional polish) + persist
       render.ts        # markdown + console output
       suppression.ts   # "recently fired in any brief" helper
     age.ts             # age + date helpers

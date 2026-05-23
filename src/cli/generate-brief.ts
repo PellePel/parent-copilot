@@ -15,6 +15,7 @@ import { listKids } from "../lib/kids.js";
 import { outgrowingCandidatesFor } from "../lib/engine/outgrowing.js";
 import { developmentalCandidatesFor } from "../lib/engine/developmental.js";
 import { absenceCandidatesFor } from "../lib/engine/absence.js";
+import { crossProductCandidatesFor } from "../lib/engine/cross_products.js";
 import { polishCandidates } from "../lib/engine/polish.js";
 import { assembleBrief } from "../lib/engine/assembler.js";
 import { renderConsole, renderMarkdown } from "../lib/engine/render.js";
@@ -78,6 +79,17 @@ for (const kid of kids) {
   if (calResult.status === "ok") {
     candidates.push(...absenceCandidatesFor(kid, upcomingEvents, asOf));
   }
+}
+
+// Cross-products are one Claude call per brief, not per kid (Claude sees the
+// whole family + all upcoming events together). Skipped silently when there
+// are no events to reason about. Skipped with a warning when no API key.
+if (calResult.status === "ok" && upcomingEvents.length > 0) {
+  const cps = await crossProductCandidatesFor(kids, upcomingEvents, asOf);
+  if (cps.length > 0) {
+    console.log(`Cross-products: Claude surfaced ${cps.length} item(s) from the calendar.`);
+  }
+  candidates.push(...cps);
 }
 
 console.log(
