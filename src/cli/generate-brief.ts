@@ -20,6 +20,12 @@ import { polishCandidates } from "../lib/engine/polish.js";
 import { assembleBrief } from "../lib/engine/assembler.js";
 import { renderConsole, renderMarkdown } from "../lib/engine/render.js";
 import { fetchUpcomingEvents, type CalendarEvent } from "../lib/calendar.js";
+import {
+  loadFamilyContext,
+  getKidByName,
+  type FamilyContext,
+  type Kid as ContextKid,
+} from "../lib/context.js";
 import { isoDate, today } from "../lib/validators.js";
 import type { Candidate } from "../lib/engine/types.js";
 
@@ -58,6 +64,31 @@ if (kids.length === 0) {
   process.exit(1);
 }
 
+// Load the family context layer if present (spec v2.1). Engines that
+// benefit from rich context (developmental's `things_we_already_know`
+// belt filter; later phases: vaccine-prep, allergen window, etc.)
+// receive the matching kid's context. Without the file, behavior falls
+// back to the v2.0 engines.
+let familyContext: FamilyContext | null = null;
+const ctxResult = loadFamilyContext();
+if (ctxResult.status === "ok") {
+  familyContext = ctxResult.context;
+  console.log(
+    `Context: loaded ${ctxResult.path} (${familyContext.kids.length} kid(s)).`,
+  );
+} else if (ctxResult.status === "not_found") {
+  console.warn(
+    `Context: ${ctxResult.path} not found — running without v2.1 context. See data/family_context.example.json for the shape.`,
+  );
+} else {
+  console.warn(`Context: failed to load ${ctxResult.path} (${ctxResult.reason}).`);
+}
+
+function contextKidFor(dbKidName: string): ContextKid | undefined {
+  if (!familyContext) return undefined;
+  return getKidByName(familyContext, dbKidName) ?? undefined;
+}
+
 // Fetch calendar events once for the whole brief — feeds the absence engine.
 // Degrade gracefully when OAuth isn't set up yet.
 const calResult = await fetchUpcomingEvents(14, new Date(`${asOf}T00:00:00Z`));
@@ -74,8 +105,9 @@ if (calResult.status === "ok") {
 
 const candidates: Candidate[] = [];
 for (const kid of kids) {
+  const contextKid = contextKidFor(kid.name);
   candidates.push(...outgrowingCandidatesFor(kid, asOf));
-  candidates.push(...developmentalCandidatesFor(kid, asOf));
+  candidates.push(...developmentalCandidatesFor(kid, asOf, { contextKid }));
   if (calResult.status === "ok") {
     candidates.push(...absenceCandidatesFor(kid, upcomingEvents, asOf));
   }
