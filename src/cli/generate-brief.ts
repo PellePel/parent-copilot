@@ -15,6 +15,8 @@ import { listKids } from "../lib/kids.js";
 import { outgrowingCandidatesFor } from "../lib/engine/outgrowing.js";
 import { developmentalCandidatesFor } from "../lib/engine/developmental.js";
 import { absenceCandidatesFor } from "../lib/engine/absence.js";
+import { vaccinePrepCandidatesFor } from "../lib/engine/vaccine_prep.js";
+import { allergenWindowCandidatesFor } from "../lib/engine/allergen_window.js";
 import { crossProductCandidatesFor } from "../lib/engine/cross_products.js";
 import { polishCandidates } from "../lib/engine/polish.js";
 import { assembleBrief } from "../lib/engine/assembler.js";
@@ -108,8 +110,11 @@ for (const kid of kids) {
   const contextKid = contextKidFor(kid.name);
   candidates.push(...outgrowingCandidatesFor(kid, asOf));
   candidates.push(...developmentalCandidatesFor(kid, asOf, { contextKid }));
+  // Context-driven engines (silent if no context kid matched)
+  candidates.push(...vaccinePrepCandidatesFor(kid, contextKid, asOf));
+  candidates.push(...allergenWindowCandidatesFor(kid, contextKid, asOf));
   if (calResult.status === "ok") {
-    candidates.push(...absenceCandidatesFor(kid, upcomingEvents, asOf));
+    candidates.push(...absenceCandidatesFor(kid, upcomingEvents, asOf, contextKid));
   }
 }
 
