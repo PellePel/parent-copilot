@@ -1,0 +1,136 @@
+{
+  "schema_version": "0.1",
+  "last_updated": "YYYY-MM-DD",
+  "comment": "This is a SHAPE-ONLY example. Real values for your family go in data/family_context.json (gitignored). The schema is loose-inside, strict-outside — adding new fields is fine and won't break the loader.",
+
+  "family": {
+    "household_name": "<your household name>",
+    "location": {
+      "city": "<city>",
+      "neighborhood": "<neighborhood, zip>",
+      "timezone": "America/New_York"
+    },
+    "members": {
+      "primary_user": {
+        "name": "<your name>",
+        "role": "parent",
+        "notes": "Brief notes about who this user is and the role they play"
+      },
+      "partner": {
+        "name": "<partner name>",
+        "role": "parent",
+        "notes": "Brief notes about the partner's role"
+      },
+      "childcare": {
+        "name": "<nanny/daycare name>",
+        "role": "nanny",
+        "schedule": "Weekdays (M-F)"
+      }
+    },
+    "standing_context": [
+      "Free-form facts about the household that should color every brief."
+    ],
+    "current_priorities": [
+      "Top-of-mind family priorities — what the brief should bias toward."
+    ]
+  },
+
+  "kids": [
+    {
+      "id": "kid_a",
+      "name": "Example Kid A",
+      "dob": "2024-01-18",
+      "sex": "F",
+
+      "developmental": {
+        "last_updated": "YYYY-MM-DD",
+        "summary": "One-paragraph qualitative summary the LLM can lean on.",
+        "milestones": [
+          {
+            "milestone": "simple_sentences_3_4_words",
+            "status": "cleared",
+            "observed_date": "~YYYY-MM",
+            "notes": "Status options: cleared | ongoing | emerging | <other>. Cleared/ongoing/emerging all suppress 'you're entering this window' items.",
+            "confidence": "high",
+            "source": "user_report_YYYY-MM-DD"
+          }
+        ],
+        "current_edges": [
+          "What this kid is actively working on. Engine boosts priority of related signals."
+        ],
+        "things_we_already_know": [
+          "category_or_milestone_id",
+          "language_milestones_through_30mo",
+          "tantrum_onset_and_basic_management"
+        ]
+      },
+
+      "gear": {
+        "last_updated": "YYYY-MM-DD",
+        "clothing_size": "<size>",
+        "shoe_size": { "eu": 24, "us_approx": "7-7.5 toddler" },
+        "shoe_last_purchased": "YYYY-MM-DD",
+        "shoe_last_brand": "<brand and size>",
+        "diaper_status": "<free-form>",
+        "car_seat": "<model + weight limit>"
+      },
+
+      "medical": {
+        "last_updated": "YYYY-MM-DD",
+        "pediatrician": {
+          "name": "<Dr. Name>",
+          "practice": "<practice name>",
+          "phone": "<phone>"
+        },
+        "last_well_visit": "YYYY-MM-DD",
+        "last_well_visit_type": "2-year",
+        "next_well_visit_due": "~YYYY-MM-DD",
+        "allergies": [],
+        "conditions": [],
+        "medications": [
+          {
+            "name": "<med name>",
+            "started": "YYYY-MM-DD",
+            "status": "<active | TBD | resolved>",
+            "context": "Why prescribed; useful for follow-up reasoning."
+          }
+        ],
+        "notable_history": [
+          {
+            "event": "Post-vaccine high fever / ER visit",
+            "date": "YYYY-MM",
+            "details": "Detailed account of the event.",
+            "implication": "What to do about it on future visits.",
+            "confidence": "high"
+          }
+        ]
+      },
+
+      "patterns": {
+        "sleep": { "schedule": "...", "notes": "..." },
+        "eating": {
+          "schedule": "...",
+          "allergen_introduction_status": {
+            "introduced": [],
+            "not_yet_introduced": ["peanut", "tree_nuts", "egg", "wheat", "dairy", "soy", "fish", "shellfish", "sesame"]
+          }
+        }
+      },
+
+      "social": { "notes": "Free-form social observations." },
+
+      "notes": ["Free-form per-kid notes."]
+    }
+  ],
+
+  "history": {
+    "comment": "Running log of agent learnings. wins, misses, observations.",
+    "entries": [
+      {
+        "date": "YYYY-MM-DD",
+        "type": "win | miss | observation",
+        "summary": "What happened, in one or two sentences."
+      }
+    ]
+  }
+}

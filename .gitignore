@@ -8,6 +8,10 @@
 /credentials.json
 /data/google-token.json
 
+# Family context — has real PII (names, phones, medical history). Never commit.
+# Commit data/family_context.example.json instead for shape documentation.
+/data/family_context.json
+
 # database
 /data/*.db
 /data/*.db-journal
