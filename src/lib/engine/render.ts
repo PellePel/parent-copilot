@@ -43,10 +43,13 @@ export function renderMarkdown(b: AssembledBrief): string {
       lines.push(`> ${item.suggestedAction}`);
       lines.push("");
     }
+    const edgeBadge = item.relatedToCurrentEdge
+      ? ` · edge: ${item.relatedToCurrentEdge}`
+      : "";
     lines.push(
       `<sub>${item.triggerSource} · ${item.triggerDetail} · ${confidenceTag(
         item.confidence,
-      )}</sub>`,
+      )}${edgeBadge}</sub>`,
     );
     lines.push("");
     lines.push(`<details><summary>Why this fired</summary>\n\n${item.reasoning}\n\n</details>`);
@@ -71,8 +74,9 @@ export function renderConsole(b: AssembledBrief): string {
     lines.push(`${item.priority}. ${who}${item.headline}`);
     lines.push(`   ${item.body}`);
     if (item.suggestedAction) lines.push(`   → ${item.suggestedAction}`);
+    const edgeNote = item.relatedToCurrentEdge ? ` · edge: ${item.relatedToCurrentEdge}` : "";
     lines.push(
-      `   [${item.triggerSource} · ${item.triggerDetail} · conf: ${item.confidence}]`,
+      `   [${item.triggerSource} · ${item.triggerDetail} · conf: ${item.confidence}${edgeNote}]`,
     );
   }
   if (b.dropped.length > 0) {

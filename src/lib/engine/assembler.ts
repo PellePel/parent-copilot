@@ -15,6 +15,7 @@ import {
   type Brief,
   type BriefItem,
 } from "../db/schema.js";
+import { EDGE_BOOST } from "./current_edges.js";
 import type { Candidate } from "./types.js";
 
 /** PRD: 3–7 items per brief. */
@@ -67,9 +68,17 @@ export function selectCandidates(candidates: Candidate[]): {
       dropped.push(c);
     }
   }
+  // Effective score = rawScore + EDGE_BOOST if this candidate is related to a
+  // kid's current_edge (v2.1 spec — priority boost). Boost is applied for
+  // ranking only; the persisted rawScore is left as-is so the engine output
+  // remains auditable.
   const confidenceRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+  const effective = (c: Candidate): number =>
+    c.rawScore + (c.relatedToCurrentEdge ? EDGE_BOOST : 0);
   const ranked = [...winners.values()].sort((a, b) => {
-    if (b.rawScore !== a.rawScore) return b.rawScore - a.rawScore;
+    const ea = effective(a);
+    const eb = effective(b);
+    if (eb !== ea) return eb - ea;
     return confidenceRank[b.confidence]! - confidenceRank[a.confidence]!;
   });
   const kept = ranked.slice(0, MAX_ITEMS);
@@ -110,6 +119,7 @@ export function persistBrief(
           reasoning: c.reasoning,
           confidence: c.confidence,
           priority: i + 1,
+          relatedToCurrentEdge: c.relatedToCurrentEdge ?? null,
         })),
       )
       .returning()

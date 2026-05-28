@@ -119,6 +119,9 @@ export const briefItems = sqliteTable(
     reasoning: text("reasoning").notNull(), // why this item fired (for eval + R2 trust)
     confidence: text("confidence", { enum: CONFIDENCE_LEVELS }).notNull(),
     priority: integer("priority").notNull(),
+    // The current_edges entry this item relates to (v2.1 spec). Used by the
+    // assembler for priority-boost and by the polish prompt for voice.
+    relatedToCurrentEdge: text("related_to_current_edge"),
   },
   (t) => ({
     briefIdx: index("brief_items_brief_idx").on(t.briefId),
