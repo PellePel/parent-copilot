@@ -3,10 +3,7 @@
  *
  * Runs every available trigger engine for every kid, hands the candidates
  * to the assembler, prints the result to console, and writes a markdown
- * mirror to briefs/YYYY-MM-DD.md.
- *
- * Phase 2a only has the outgrowing engine. Schedule, Seasonal, developmental
- * windows, and calendar context land in 2b–2c.
+ * mirror to briefs/YYYY-MM-DD.md plus a structured log to .log.json.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -17,11 +14,18 @@ import { developmentalCandidatesFor } from "../lib/engine/developmental.js";
 import { absenceCandidatesFor } from "../lib/engine/absence.js";
 import { vaccinePrepCandidatesFor } from "../lib/engine/vaccine_prep.js";
 import { allergenWindowCandidatesFor } from "../lib/engine/allergen_window.js";
+import { medicationFollowupCandidatesFor } from "../lib/engine/medication_followup.js";
 import { crossProductCandidatesFor } from "../lib/engine/cross_products.js";
 import { annotateWithEdges } from "../lib/engine/current_edges.js";
 import { polishCandidates } from "../lib/engine/polish.js";
 import { assembleBrief } from "../lib/engine/assembler.js";
 import { renderConsole, renderMarkdown } from "../lib/engine/render.js";
+import {
+  buildBriefLog,
+  writeBriefLog,
+  type TokenUsage,
+  type BriefLog,
+} from "../lib/engine/brief_log.js";
 import {
   CALENDAR_LOOKAHEAD_DAYS,
   fetchUpcomingEvents,
@@ -55,6 +59,10 @@ const opts = program.opts<{
   polish: boolean;
 }>();
 
+const startedAtMs = Date.now();
+const polishUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 };
+const crossProductsUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 };
+
 const asOf = opts.date ?? today();
 const dateCheck = isoDate.safeParse(asOf);
 if (!dateCheck.success) {
@@ -77,9 +85,11 @@ if (kids.length === 0) {
 // receive the matching kid's context. Without the file, behavior falls
 // back to the v2.0 engines.
 let familyContext: FamilyContext | null = null;
+let contextLogMeta: { path: string; sha256: string } | null = null;
 const ctxResult = loadFamilyContext();
 if (ctxResult.status === "ok") {
   familyContext = ctxResult.context;
+  contextLogMeta = { path: ctxResult.path, sha256: ctxResult.sha256 };
   console.log(
     `Context: loaded ${ctxResult.path} (${familyContext.kids.length} kid(s)).`,
   );
@@ -103,15 +113,26 @@ const calResult = await fetchUpcomingEvents(
   new Date(`${asOf}T00:00:00Z`),
 );
 let upcomingEvents: CalendarEvent[] = [];
+const calendarLogMeta: BriefLog["calendar"] = {
+  status: "skipped",
+  lookahead_days: CALENDAR_LOOKAHEAD_DAYS,
+  events_count: 0,
+};
 if (calResult.status === "ok") {
   upcomingEvents = calResult.events;
+  calendarLogMeta.status = "ok";
+  calendarLogMeta.events_count = upcomingEvents.length;
   console.log(
     `Calendar: fetched ${upcomingEvents.length} event(s) over the next ${CALENDAR_LOOKAHEAD_DAYS} days.`,
   );
 } else if (calResult.status === "not_configured") {
+  calendarLogMeta.status = "not_configured";
+  calendarLogMeta.reason = calResult.reason;
   console.warn(`Calendar: ${calResult.reason}`);
   console.warn(`Calendar: absence detection will be skipped. Run \`npm run auth:google\` to enable.`);
 } else {
+  calendarLogMeta.status = "error";
+  calendarLogMeta.reason = calResult.reason;
   console.warn(`Calendar: error fetching events (${calResult.reason}). Absence detection skipped.`);
 }
 
@@ -123,6 +144,7 @@ for (const kid of kids) {
   // Context-driven engines (silent if no context kid matched)
   candidates.push(...vaccinePrepCandidatesFor(kid, contextKid, asOf));
   candidates.push(...allergenWindowCandidatesFor(kid, contextKid, asOf));
+  candidates.push(...medicationFollowupCandidatesFor(kid, contextKid, asOf));
   if (calResult.status === "ok") {
     candidates.push(...absenceCandidatesFor(kid, upcomingEvents, asOf, contextKid));
   }
@@ -134,6 +156,7 @@ for (const kid of kids) {
 if (calResult.status === "ok" && upcomingEvents.length > 0) {
   const cps = await crossProductCandidatesFor(kids, upcomingEvents, asOf, {
     familyContext: familyContext ?? undefined,
+    usage: crossProductsUsage,
   });
   if (cps.length > 0) {
     console.log(`Cross-products: Claude surfaced ${cps.length} item(s) from the calendar.`);
@@ -184,10 +207,15 @@ if (opts.dryRun) {
 }
 
 // 2. Assemble (select + optionally polish via Claude + persist).
+// Wrap polishCandidates so we can capture usage even though the assembler
+// owns when it's invoked.
+const wrappedPolish = opts.polish
+  ? (cs: Candidate[]) => polishCandidates(cs, { usage: polishUsage })
+  : undefined;
 const assembled = await assembleBrief(candidates, {
   weekOfIso: asOf,
   recipients,
-  polish: opts.polish ? polishCandidates : undefined,
+  polish: wrappedPolish,
 });
 
 // 3. Console output.
@@ -196,7 +224,24 @@ console.log(renderConsole(assembled));
 
 // 4. Markdown mirror.
 mkdirSync("briefs", { recursive: true });
-const path = `briefs/${assembled.brief.weekOf}.md`;
-writeFileSync(path, renderMarkdown(assembled), "utf8");
+const markdownPath = `briefs/${assembled.brief.weekOf}.md`;
+writeFileSync(markdownPath, renderMarkdown(assembled), "utf8");
+
+// 5. Structured per-brief JSON log (v2.1 spec).
+const log = buildBriefLog({
+  asOf,
+  weekOf: assembled.brief.weekOf,
+  startedAtMs,
+  contextLoaded: contextLogMeta,
+  calendar: calendarLogMeta,
+  allCandidates: candidates,
+  assembled,
+  polishUsage,
+  crossProductsUsage,
+});
+const logPath = `briefs/${assembled.brief.weekOf}.log.json`;
+writeBriefLog(logPath, log);
+
 console.log("");
-console.log(`Wrote ${path} (brief id=${assembled.brief.id}, ${assembled.items.length} items).`);
+console.log(`Wrote ${markdownPath} (brief id=${assembled.brief.id}, ${assembled.items.length} items).`);
+console.log(`Wrote ${logPath} (latency=${log.latency_ms}ms, polish_tokens=${polishUsage.input_tokens}+${polishUsage.output_tokens}, cross_tokens=${crossProductsUsage.input_tokens}+${crossProductsUsage.output_tokens}).`);

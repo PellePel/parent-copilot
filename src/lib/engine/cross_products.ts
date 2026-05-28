@@ -230,6 +230,12 @@ type CrossProductOptions = {
    * be mapped back to our DB.
    */
   familyContext?: FamilyContext;
+  /**
+   * Mutable usage accumulator. If supplied, the function adds input/output
+   * tokens for any Claude calls it makes. Captured even when downstream
+   * validation fails.
+   */
+  usage?: { input_tokens: number; output_tokens: number };
 };
 
 function buildContextPayload(
@@ -324,6 +330,10 @@ export async function crossProductCandidatesFor(
         },
       ],
     });
+    if (options.usage) {
+      options.usage.input_tokens += response.usage.input_tokens;
+      options.usage.output_tokens += response.usage.output_tokens;
+    }
     const toolBlock = response.content.find((b) => b.type === "tool_use");
     if (!toolBlock || toolBlock.type !== "tool_use") {
       console.warn("Cross-products: model didn't return a tool_use block. Skipping.");

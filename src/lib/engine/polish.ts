@@ -108,6 +108,12 @@ type PolishOptions = {
   apiKey?: string;
   /** Override the model. */
   model?: string;
+  /**
+   * Mutable usage accumulator. If supplied, the function adds input/output
+   * tokens for any Claude calls it makes. Captured even when downstream
+   * validation fails — tokens were already spent.
+   */
+  usage?: { input_tokens: number; output_tokens: number };
 };
 
 export async function polishCandidates(
@@ -160,6 +166,10 @@ export async function polishCandidates(
         },
       ],
     });
+    if (options.usage) {
+      options.usage.input_tokens += response.usage.input_tokens;
+      options.usage.output_tokens += response.usage.output_tokens;
+    }
     const toolBlock = response.content.find((b) => b.type === "tool_use");
     if (!toolBlock || toolBlock.type !== "tool_use") {
       console.warn("Polish: model didn't return a tool_use block. Using engine-templated text.");

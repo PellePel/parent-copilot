@@ -16,6 +16,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { ageInMonths, formatAge, todayIso } from "./age.js";
 
@@ -68,21 +69,34 @@ export class ContextParseError extends Error {
 }
 
 export type LoadResult =
-  | { status: "ok"; context: FamilyContext; path: string }
+  | { status: "ok"; context: FamilyContext; path: string; sha256: string }
   | { status: "not_found"; path: string }
   | { status: "parse_error"; path: string; reason: string };
 
 /**
  * Load and validate the family context. Returns a typed status response so
- * callers can degrade gracefully when the file is missing or malformed.
+ * callers can degrade gracefully when the file is missing or malformed. The
+ * `sha256` field on `ok` results uniquely identifies the loaded version —
+ * used in per-brief logs so we can correlate a brief with the context state
+ * at the time it was generated.
  */
 export function loadFamilyContext(path: string = DEFAULT_PATH): LoadResult {
   if (!existsSync(path)) {
     return { status: "not_found", path };
   }
+  let rawText: string;
+  try {
+    rawText = readFileSync(path, "utf8");
+  } catch (err) {
+    return {
+      status: "parse_error",
+      path,
+      reason: `read failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8"));
+    raw = JSON.parse(rawText);
   } catch (err) {
     return {
       status: "parse_error",
@@ -101,7 +115,8 @@ export function loadFamilyContext(path: string = DEFAULT_PATH): LoadResult {
         .join("; "),
     };
   }
-  return { status: "ok", context: parsed.data, path };
+  const sha256 = createHash("sha256").update(rawText).digest("hex");
+  return { status: "ok", context: parsed.data, path, sha256 };
 }
 
 // =============================================================================
@@ -170,6 +185,34 @@ export function getKidMilestones(kid: Kid): ContextMilestone[] {
   const list = (dev as Record<string, unknown>)["milestones"];
   if (!Array.isArray(list)) return [];
   return list.filter(isMilestone);
+}
+
+export type ContextMedication = {
+  name: string;
+  started?: string;
+  status?: string;
+  instructions?: string;
+  context?: string;
+};
+
+/**
+ * Medications listed under context.medical.medications. The medication
+ * follow-up engine uses these to flag entries with TBD/missing status that
+ * haven't been confirmed in 30+ days (e.g. "is Jude still on the saline
+ * neb?"). Missing entries return an empty list.
+ */
+export function getKidMedications(kid: Kid): ContextMedication[] {
+  const medical = (kid as Record<string, unknown>)["medical"];
+  if (!isObject(medical)) return [];
+  const list = (medical as Record<string, unknown>)["medications"];
+  if (!Array.isArray(list)) return [];
+  return list.filter(isMedication);
+}
+
+function isMedication(v: unknown): v is ContextMedication {
+  if (!isObject(v)) return false;
+  if (typeof v["name"] !== "string") return false;
+  return true;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
