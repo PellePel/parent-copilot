@@ -25,10 +25,11 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { ageInMonths, formatAge, todayIso } from "../age.js";
 import type { CalendarEvent } from "../calendar.js";
+import { type FamilyContext } from "../context.js";
 import { db } from "../db/index.js";
 import {
   events,
@@ -49,28 +50,38 @@ const SCORE_BY_CONFIDENCE: Record<string, number> = {
   low: 52,
 };
 
-const SYSTEM_PROMPT = `You are the cross-product reasoner for a weekly parenting brief — a Sunday-morning email a parent reads in two minutes.
+const SYSTEM_PROMPT = `You are the cross-product reasoner for Nick's weekly parenting brief — a Sunday-morning email he reads in two minutes. Nick has two kids and a partner (Mika) who currently carries most of the family's mental load. The brief exists to help Nick anticipate things he'd otherwise miss.
 
-You receive a structured snapshot of each kid (age, latest measurements, recent gear purchases, notes) AND the family's upcoming calendar events (next 14 days). Your job: find the small number of items where the calendar AND the family state intersect in a way the parent might miss.
+You receive a JSON payload that contains either:
+  (a) \`family_context\` — the full family_context.json contents with each kid augmented with \`db_kid_id\` (numeric id to use in the response), \`computed_age\` and \`computed_age_months\`, OR
+  (b) a narrower \`kids\` snapshot (legacy fallback for when no context is loaded).
+Plus \`upcoming_events\` — calendar events for the next 30 days.
 
-The canonical example: "Trip to Maine next week. Jude's swim diapers from last summer were size 6m, but he's in 9m clothes now — get new swim diapers."
+Your job: find the small number of items where the calendar AND the family state intersect in a way Nick (or Mika) might miss. The canonical example: "Trip to Maine next week. Jude's swim diapers from last summer were size 6m, but he's in 9m clothes now — get new swim diapers."
+
+When \`family_context\` is provided, you have rich state to reason over: developmental milestones (cleared/ongoing/emerging), medical history (notable_history with implications), current edges (what each kid is actively working on), medications (active/TBD), patterns (sleep, eating, allergen rollout), things_we_already_know.
 
 Rules:
 - Be sparse. Silent is better than spammy. Empty array is a fine response.
 - Skip routine events (school day, work block, regular weekly thing) unless something unusual applies.
 - DON'T produce generic packing reminders. The point is the CROSS-PRODUCT: combine specific calendar facts with specific family-state facts.
 - DON'T invent facts that aren't in the inputs. If you're guessing a connection, skip it.
-- DON'T produce items already handled by the dedicated engines:
+- DON'T produce items already handled by the dedicated engines, which run before you:
   * Outgrowing (shoes, clothes, carseat weight)
-  * Developmental windows (age-banded heads-ups)
-  * Well-visit absence (well-visit is age-due but not on calendar)
-  These have their own engines; your job is the residual.
-- If the calendar event is itself a well-visit on the schedule, you CAN flag prep items (what to ask the pediatrician, what vaccines might be due) — but only if there's something specific worth noting.
+  * Developmental windows (age-banded heads-ups — already filtered through context milestones and things_we_already_know)
+  * Well-visit absence (well-visit is age-due but not on calendar/context)
+  * Vaccine prep (notable_history + upcoming well-visit)
+  * Allergen window (4-7mo allergen rollout)
+  Your job is the residual.
+- HONOR things_we_already_know — if a kid has an entry there, don't surface anything in that area unless the calendar event creates a genuinely new angle on it.
+- The kid's \`current_edges\` list is a positive signal — items connecting an upcoming event to a current edge are exactly what the parent wants. Use them.
+- For each item, set \`kid_id\` to the numeric \`db_kid_id\` from the input (NOT the string context id like "clem"). Use null for family-level items.
 
 Voice:
-- Conversational. Contractions are fine.
+- Warm but direct. Like a thoughtful friend who has read the medical literature.
+- Conversational. Contractions are fine. Second person to Nick (say "you").
 - Concrete. Cite the calendar event by name and date. Cite the kid state that combines with it.
-- No lecturing.
+- No lecturing. No medical disclaimers unless safety-relevant.
 
 Length:
 - Headline under 80 chars.
@@ -211,7 +222,40 @@ function snapshotKid(kid: Kid, asOf: string): KidSnapshot {
 type CrossProductOptions = {
   apiKey?: string;
   model?: string;
+  /**
+   * Optional family_context.json contents. When provided, the engine sends
+   * the WHOLE context to Claude (per v2.1 spec — "full context in the prompt
+   * every time") instead of the narrower SQLite snapshot. Each context kid
+   * gets augmented with the matching numeric db_kid_id so the response can
+   * be mapped back to our DB.
+   */
+  familyContext?: FamilyContext;
 };
+
+function buildContextPayload(
+  familyContext: FamilyContext,
+  dbKids: Kid[],
+  asOf: string,
+): unknown {
+  // Map each context kid to its DB counterpart by name (first-name match).
+  const augmentedKids = familyContext.kids.map((ck) => {
+    const firstName = ck.name.split(" ")[0]?.toLowerCase() ?? "";
+    const dbKid = dbKids.find(
+      (dk) => dk.name.toLowerCase().startsWith(firstName) && firstName.length > 0,
+    );
+    return {
+      ...ck,
+      db_kid_id: dbKid?.id ?? null,
+      computed_age: formatAge(ck.dob, asOf),
+      computed_age_months: ageInMonths(ck.dob, asOf),
+    };
+  });
+  return {
+    family: familyContext["family"],
+    kids: augmentedKids,
+    history: familyContext["history"],
+  };
+}
 
 export async function crossProductCandidatesFor(
   kids: Kid[],
@@ -230,18 +274,31 @@ export async function crossProductCandidatesFor(
     return [];
   }
 
-  const snapshot = {
-    as_of: asOf,
-    kids: kids.map((k) => snapshotKid(k, asOf)),
-    upcoming_events: upcomingEvents.map((e) => ({
-      id: e.id,
-      summary: e.summary,
-      start: e.start,
-      end: e.end,
-      description: e.description,
-      location: e.location,
-    })),
-  };
+  const snapshot = options.familyContext
+    ? {
+        as_of: asOf,
+        family_context: buildContextPayload(options.familyContext, kids, asOf),
+        upcoming_events: upcomingEvents.map((e) => ({
+          id: e.id,
+          summary: e.summary,
+          start: e.start,
+          end: e.end,
+          description: e.description,
+          location: e.location,
+        })),
+      }
+    : {
+        as_of: asOf,
+        kids: kids.map((k) => snapshotKid(k, asOf)),
+        upcoming_events: upcomingEvents.map((e) => ({
+          id: e.id,
+          summary: e.summary,
+          start: e.start,
+          end: e.end,
+          description: e.description,
+          location: e.location,
+        })),
+      };
 
   const client = new Anthropic({ apiKey });
   let toolInput: unknown;

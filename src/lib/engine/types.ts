@@ -24,4 +24,10 @@ export type Candidate = {
    * sources. Use a 0-100 scale by convention.
    */
   rawScore: number;
+  /**
+   * If this candidate relates to a kid's current_edges entry (spec v2.1 —
+   * what they're actively working on), the matching edge string lives here.
+   * The assembler boosts the score; the polish prompt uses it for voice.
+   */
+  relatedToCurrentEdge?: string;
 };
