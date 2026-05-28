@@ -23,6 +23,7 @@ import {
   type WellVisitMilestone,
 } from "../kb/well_visits.js";
 import { looksLikeWellVisit, type CalendarEvent } from "../calendar.js";
+import { type Kid as ContextKid } from "../context.js";
 import { firedInLast } from "./suppression.js";
 import type { Candidate } from "./types.js";
 
@@ -30,6 +31,27 @@ const SUPPRESSION_WINDOW_WEEKS = 4;
 const FLAG_WITHIN_WEEKS = 6; // start nudging this far out
 const PAST_HORIZON_WEEKS = 8; // look back this far for missed visits
 const OVERDUE_WEEKS_PAST_TARGET = 2; // past target by this much → overdue framing
+
+/**
+ * Has the context layer's medical.next_well_visit.date fallen within
+ * ±toleranceWeeks of the target? Means the user already scheduled it and
+ * tracked it in family_context.json; no need to nag.
+ */
+function isWellVisitHandledByContext(
+  contextKid: ContextKid | undefined,
+  targetDateIso: string,
+  toleranceWeeks: number,
+): boolean {
+  if (!contextKid) return false;
+  const medical = (contextKid as Record<string, unknown>)["medical"];
+  if (!medical || typeof medical !== "object") return false;
+  const next = (medical as Record<string, unknown>)["next_well_visit"];
+  if (!next || typeof next !== "object") return false;
+  const date = (next as Record<string, unknown>)["date"];
+  if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const days = Math.abs(daysBetween(targetDateIso, date));
+  return days <= toleranceWeeks * 7;
+}
 
 /** Has a well_visit event been logged within ±toleranceWeeks of targetDateIso? */
 function isWellVisitHandledByEvent(
@@ -70,6 +92,7 @@ function findUnhandledVisit(
   kid: Kid,
   upcomingEvents: CalendarEvent[],
   asOf: string,
+  contextKid: ContextKid | undefined,
 ): { visit: WellVisitMilestone; targetIso: string; weeksToTarget: number } | null {
   // Pre-compute whether ANY upcoming calendar event looks like a well-visit
   // for this kid. If so, every visit milestone is considered handled (we
@@ -88,6 +111,7 @@ function findUnhandledVisit(
     if (weeksToTarget > FLAG_WITHIN_WEEKS) break;
 
     if (isWellVisitHandledByEvent(kid.id, targetIso, visit.windowWeeks)) continue;
+    if (isWellVisitHandledByContext(contextKid, targetIso, visit.windowWeeks)) continue;
     if (calendarCovers) continue;
     return { visit, targetIso, weeksToTarget };
   }
@@ -98,9 +122,10 @@ export function absenceCandidatesFor(
   kid: Kid,
   upcomingEvents: CalendarEvent[],
   asOf: string = todayIso(),
+  contextKid?: ContextKid,
 ): Candidate[] {
   const ageMonths = ageInMonths(kid.dob, asOf);
-  const found = findUnhandledVisit(kid, upcomingEvents, asOf);
+  const found = findUnhandledVisit(kid, upcomingEvents, asOf, contextKid);
   if (!found) return [];
 
   const { visit, targetIso, weeksToTarget } = found;
