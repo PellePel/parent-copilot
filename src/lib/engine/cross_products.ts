@@ -55,7 +55,7 @@ const SYSTEM_PROMPT = `You are the cross-product reasoner for Nick's weekly pare
 You receive a JSON payload that contains either:
   (a) \`family_context\` — the full family_context.json contents with each kid augmented with \`db_kid_id\` (numeric id to use in the response), \`computed_age\` and \`computed_age_months\`, OR
   (b) a narrower \`kids\` snapshot (legacy fallback for when no context is loaded).
-Plus \`upcoming_events\` — calendar events for the next 14 days.
+Plus \`upcoming_events\` — calendar events for the next 30 days.
 
 Your job: find the small number of items where the calendar AND the family state intersect in a way Nick (or Mika) might miss. The canonical example: "Trip to Maine next week. Jude's swim diapers from last summer were size 6m, but he's in 9m clothes now — get new swim diapers."
 

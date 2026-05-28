@@ -22,7 +22,11 @@ import { annotateWithEdges } from "../lib/engine/current_edges.js";
 import { polishCandidates } from "../lib/engine/polish.js";
 import { assembleBrief } from "../lib/engine/assembler.js";
 import { renderConsole, renderMarkdown } from "../lib/engine/render.js";
-import { fetchUpcomingEvents, type CalendarEvent } from "../lib/calendar.js";
+import {
+  CALENDAR_LOOKAHEAD_DAYS,
+  fetchUpcomingEvents,
+  type CalendarEvent,
+} from "../lib/calendar.js";
 import {
   loadFamilyContext,
   getKidByName,
@@ -92,13 +96,18 @@ function contextKidFor(dbKidName: string): ContextKid | undefined {
   return getKidByName(familyContext, dbKidName) ?? undefined;
 }
 
-// Fetch calendar events once for the whole brief — feeds the absence engine.
-// Degrade gracefully when OAuth isn't set up yet.
-const calResult = await fetchUpcomingEvents(14, new Date(`${asOf}T00:00:00Z`));
+// Fetch calendar events once for the whole brief — feeds the absence engine
+// and cross-products. Degrade gracefully when OAuth isn't set up yet.
+const calResult = await fetchUpcomingEvents(
+  CALENDAR_LOOKAHEAD_DAYS,
+  new Date(`${asOf}T00:00:00Z`),
+);
 let upcomingEvents: CalendarEvent[] = [];
 if (calResult.status === "ok") {
   upcomingEvents = calResult.events;
-  console.log(`Calendar: fetched ${upcomingEvents.length} event(s) over the next 14 days.`);
+  console.log(
+    `Calendar: fetched ${upcomingEvents.length} event(s) over the next ${CALENDAR_LOOKAHEAD_DAYS} days.`,
+  );
 } else if (calResult.status === "not_configured") {
   console.warn(`Calendar: ${calResult.reason}`);
   console.warn(`Calendar: absence detection will be skipped. Run \`npm run auth:google\` to enable.`);

@@ -36,12 +36,20 @@ export type FetchResult =
   | { status: "error"; reason: string };
 
 /**
+ * Default calendar lookahead window. Set to 30 days to catch trips and
+ * larger planned events 2–4 weeks out, when there's still time to prep
+ * (e.g. swim diapers for an upcoming beach trip). Smaller windows miss
+ * those signals; larger windows add noise.
+ */
+export const CALENDAR_LOOKAHEAD_DAYS = 30;
+
+/**
  * Fetch upcoming events from the user's primary Google Calendar.
- * @param days how many days ahead to look (default 14)
+ * @param days how many days ahead to look (default CALENDAR_LOOKAHEAD_DAYS)
  * @param asOf base date for "now" — defaults to current time
  */
 export async function fetchUpcomingEvents(
-  days = 14,
+  days = CALENDAR_LOOKAHEAD_DAYS,
   asOf: Date = new Date(),
 ): Promise<FetchResult> {
   const fixturePath = process.env.COPILOT_CALENDAR_FIXTURE;
