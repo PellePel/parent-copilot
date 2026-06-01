@@ -96,10 +96,10 @@ Confidence:
 Return JSON via the submit_items tool. If nothing meaningful, return { "items": [] }.`;
 
 const ResponseItem = z.object({
-  id: z
-    .string()
-    .min(1)
-    .regex(/^[a-z0-9_-]+$/, "id must be lowercase slug"),
+  // Accept any non-empty string; we slugify it ourselves (see slugify) rather
+  // than rejecting. A model-returned id like "Maine Trip" shouldn't nuke the
+  // whole batch — it just gets coerced to "maine-trip".
+  id: z.string().min(1),
   kid_id: z.union([z.number().int().positive(), z.null()]),
   headline: z.string().min(1),
   body: z.string().min(1),
@@ -108,9 +108,20 @@ const ResponseItem = z.object({
   confidence: z.enum(["high", "medium", "low"]),
 });
 
-const ResponsePayload = z.object({
-  items: z.array(ResponseItem),
+// The envelope is validated loosely so a single malformed item doesn't fail
+// the whole response; each item is validated individually below.
+const ResponseEnvelope = z.object({
+  items: z.array(z.unknown()),
 });
+
+/** Coerce any model-provided id into a stable lowercase slug. */
+function slugify(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
 
 const TOOL_DEFINITION = {
   name: "submit_items",
@@ -347,30 +358,40 @@ export async function crossProductCandidatesFor(
     return [];
   }
 
-  const parsed = ResponsePayload.safeParse(toolInput);
-  if (!parsed.success) {
+  const envelope = ResponseEnvelope.safeParse(toolInput);
+  if (!envelope.success) {
     console.warn(
-      `Cross-products: tool response failed schema validation (${parsed.error.issues[0]?.message}). Skipping.`,
+      `Cross-products: tool response missing items array (${envelope.error.issues[0]?.message}). Skipping.`,
     );
     return [];
   }
 
   const validKidIds = new Set(kids.map((k) => k.id));
   const candidates: Candidate[] = [];
-  for (const item of parsed.data.items) {
+  let dropped = 0;
+  envelope.data.items.forEach((raw, index) => {
+    const itemParse = ResponseItem.safeParse(raw);
+    if (!itemParse.success) {
+      dropped += 1;
+      return;
+    }
+    const item = itemParse.data;
+    // Coerce the model's id to a slug; fall back to a positional id if it
+    // slugifies to empty (e.g. an all-punctuation id).
+    const slug = slugify(item.id) || `item-${index + 1}`;
     if (item.kid_id !== null && !validKidIds.has(item.kid_id)) {
       console.warn(
-        `Cross-products: item "${item.id}" references unknown kid_id=${item.kid_id}. Skipping that item.`,
+        `Cross-products: item "${slug}" references unknown kid_id=${item.kid_id}. Skipping that item.`,
       );
-      continue;
+      return;
     }
-    const triggerDetail = `crossproduct:${item.id}`;
+    const triggerDetail = `crossproduct:${slug}`;
     // Suppression key is kidId-scoped; family-level items use 0 as a stand-in
     // (no kid has id=0). Since (kidId, triggerDetail) is the dedup key in the
     // assembler too, this keeps family-level items separated from per-kid ones.
     const suppressionKidId = item.kid_id ?? 0;
     if (firedInLast(suppressionKidId, triggerDetail, SUPPRESSION_WINDOW_WEEKS, asOf)) {
-      continue;
+      return;
     }
     candidates.push({
       kidId: item.kid_id,
@@ -383,6 +404,11 @@ export async function crossProductCandidatesFor(
       confidence: item.confidence,
       rawScore: SCORE_BY_CONFIDENCE[item.confidence] ?? 60,
     });
+  });
+  if (dropped > 0) {
+    console.warn(
+      `Cross-products: dropped ${dropped} malformed item(s); kept ${candidates.length}.`,
+    );
   }
   return candidates;
 }
