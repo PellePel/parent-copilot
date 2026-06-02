@@ -1,6 +1,9 @@
 # dependencies
 /node_modules
 
+# Compound Engineering — local machine prefs (example file stays committed)
+.compound-engineering/*.local.yaml
+
 # environment
 .env*
 
