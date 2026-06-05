@@ -24,6 +24,7 @@ const clem = db
     name: "Clem",
     dob: "2024-01-18",
     notes: "Toddler. Currently in 3T clothes.",
+    spineId: "clem", // matches data/family_context.json kid id
   })
   .returning()
   .get();
@@ -34,6 +35,7 @@ const jude = db
     name: "Jude",
     dob: "2025-12-07",
     notes: "Infant. Approaching 6-month well-visit window.",
+    spineId: "jude", // matches data/family_context.json kid id
   })
   .returning()
   .get();

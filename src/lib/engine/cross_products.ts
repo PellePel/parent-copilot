@@ -29,7 +29,7 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { ageInMonths, formatAge, todayIso } from "../age.js";
 import type { CalendarEvent } from "../calendar.js";
-import { type FamilyContext } from "../context.js";
+import { type FamilyContext, spineIdFromName } from "../context.js";
 import { db } from "../db/index.js";
 import {
   events,
@@ -39,6 +39,7 @@ import {
   type Event,
 } from "../db/schema.js";
 import { firedInLast } from "./suppression.js";
+import { redactQuarantined } from "./candidate_filter.js";
 import type { Candidate } from "./types.js";
 
 const MODEL = "claude-sonnet-4-5";
@@ -294,7 +295,12 @@ export async function crossProductCandidatesFor(
   const snapshot = options.familyContext
     ? {
         as_of: asOf,
-        family_context: buildContextPayload(options.familyContext, kids, asOf),
+        // Redact actively-quarantined subtrees so the LLM can't reason off a
+        // "wrong"-flagged fact. Operates on a deep copy — the loaded context is
+        // left intact for the rest of the brief run.
+        family_context: redactQuarantined(
+          buildContextPayload(options.familyContext, kids, asOf),
+        ),
         upcoming_events: upcomingEvents.map((e) => ({
           id: e.id,
           summary: e.summary,
@@ -393,6 +399,12 @@ export async function crossProductCandidatesFor(
     if (firedInLast(suppressionKidId, triggerDetail, SUPPRESSION_WINDOW_WEEKS, asOf)) {
       return;
     }
+    // Resolve the kid's spine id from the matching DB row. Family-level items
+    // (kid_id null) reference no kid, so kidSpineId is empty. The path is a
+    // synthetic marker — a cross-product is reasoned across many records, not a
+    // single spine field — keyed by the slug so reactions can still address it.
+    const itemKid = item.kid_id === null ? undefined : kids.find((k) => k.id === item.kid_id);
+    const kidSpineId = itemKid ? itemKid.spineId ?? spineIdFromName(itemKid.name) : "";
     candidates.push({
       kidId: item.kid_id,
       headline: item.headline,
@@ -400,6 +412,7 @@ export async function crossProductCandidatesFor(
       suggestedAction: item.suggested_action,
       triggerSource: "lookahead",
       triggerDetail,
+      citedRecord: { kidSpineId, path: `<crossproduct:${slug}>` },
       reasoning: `[crossproduct] ${item.reasoning}`,
       confidence: item.confidence,
       rawScore: SCORE_BY_CONFIDENCE[item.confidence] ?? 60,

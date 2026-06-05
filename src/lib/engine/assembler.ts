@@ -120,6 +120,8 @@ export function persistBrief(
           confidence: c.confidence,
           priority: i + 1,
           relatedToCurrentEdge: c.relatedToCurrentEdge ?? null,
+          citedRecord: c.citedRecord,
+          factTarget: c.factTarget ?? null,
         })),
       )
       .returning()

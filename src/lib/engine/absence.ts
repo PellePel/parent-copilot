@@ -23,7 +23,7 @@ import {
   type WellVisitMilestone,
 } from "../kb/well_visits.js";
 import { looksLikeWellVisit, type CalendarEvent } from "../calendar.js";
-import { type Kid as ContextKid } from "../context.js";
+import { type Kid as ContextKid, spineIdFromName } from "../context.js";
 import { firedInLast } from "./suppression.js";
 import type { Candidate } from "./types.js";
 
@@ -185,6 +185,11 @@ export function absenceCandidatesFor(
       suggestedAction,
       triggerSource: "lookahead",
       triggerDetail,
+      citedRecord: {
+        kidSpineId: contextKid?.id ?? kid.spineId ?? spineIdFromName(kid.name),
+        path: "medical.next_well_visit",
+      },
+      factTarget: { kind: "well_visit" },
       reasoning,
       confidence,
       rawScore,

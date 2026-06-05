@@ -17,6 +17,7 @@ import { allergenWindowCandidatesFor } from "../lib/engine/allergen_window.js";
 import { medicationFollowupCandidatesFor } from "../lib/engine/medication_followup.js";
 import { crossProductCandidatesFor } from "../lib/engine/cross_products.js";
 import { annotateWithEdges } from "../lib/engine/current_edges.js";
+import { filterCandidates } from "../lib/engine/candidate_filter.js";
 import { polishCandidates } from "../lib/engine/polish.js";
 import { assembleBrief } from "../lib/engine/assembler.js";
 import { renderConsole, renderMarkdown } from "../lib/engine/render.js";
@@ -38,6 +39,7 @@ import {
   type Kid as ContextKid,
 } from "../lib/context.js";
 import { isoDate, today } from "../lib/validators.js";
+import { deliverBrief } from "../lib/deliver.js";
 import type { Candidate } from "../lib/engine/types.js";
 
 const program = new Command()
@@ -177,6 +179,22 @@ if (edgeAnnotated > 0) {
   console.log(`Current edges: ${edgeAnnotated} candidate(s) tagged for priority boost.`);
 }
 
+// Suppression + quarantine chokepoint (U6). Drops candidates that are actively
+// suppressed (re-validated, not permanent) or cite a quarantined record. Runs
+// after collection + edge annotation, before the assembler. Additive — coexists
+// with the engines' own firedInLast / context suppression. Mutate the array in
+// place so the dry-run preview, assembler, and log all see the filtered set.
+const beforeFilter = candidates.length;
+const kept = filterCandidates(candidates, { asOf });
+candidates.length = 0;
+candidates.push(...kept);
+const droppedByFilter = beforeFilter - candidates.length;
+if (droppedByFilter > 0) {
+  console.log(
+    `Suppression/quarantine: dropped ${droppedByFilter} candidate(s); ${candidates.length} remain.`,
+  );
+}
+
 console.log(
   `Collected ${candidates.length} candidate(s) across ${kids.length} kid(s) for week of ${asOf}.`,
 );
@@ -245,3 +263,20 @@ writeBriefLog(logPath, log);
 console.log("");
 console.log(`Wrote ${markdownPath} (brief id=${assembled.brief.id}, ${assembled.items.length} items).`);
 console.log(`Wrote ${logPath} (latency=${log.latency_ms}ms, polish_tokens=${polishUsage.input_tokens}+${polishUsage.output_tokens}, cross_tokens=${crossProductsUsage.input_tokens}+${crossProductsUsage.output_tokens}).`);
+
+// 6. Deliver to Telegram. Skipped under --dry-run (which already exited above,
+// but guard anyway). Degrades gracefully when the bot isn't configured —
+// mirrors the calendar not_configured branch.
+if (!opts.dryRun) {
+  const total = assembled.items.length;
+  const delivery = await deliverBrief(assembled.items);
+  if (delivery.notConfigured) {
+    console.warn(
+      "Telegram not configured — skipping delivery (set TELEGRAM_BOT_TOKEN/CHAT_ID/CALLBACK_SECRET in .env).",
+    );
+  } else {
+    console.log(
+      `Delivered ${delivery.delivered}/${total} items to Telegram (${delivery.failed} failed).`,
+    );
+  }
+}

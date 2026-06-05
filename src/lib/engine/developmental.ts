@@ -33,6 +33,7 @@ import {
   type Kid as ContextKid,
   getKidMilestones,
   getKidSuppressions,
+  spineIdFromName,
 } from "../context.js";
 import { isSuppressedByContext } from "./context_suppression.js";
 import type { Candidate } from "./types.js";
@@ -108,6 +109,10 @@ export function developmentalCandidatesFor(
     age_str: formatAge(kid.dob, asOf),
   };
 
+  // Prefer the context kid's spine id (authoritative), then the DB row's
+  // spine_id, then a name-derived fallback for rows that predate the column.
+  const kidSpineId = options.contextKid?.id ?? kid.spineId ?? spineIdFromName(kid.name);
+
   const candidates: Candidate[] = [];
   for (const w of active) {
     const suppression = isSuppressedByContext(
@@ -131,6 +136,8 @@ export function developmentalCandidatesFor(
         : undefined,
       triggerSource: "lookahead",
       triggerDetail: `developmental:${w.id}`,
+      citedRecord: { kidSpineId, path: `developmental.milestones[${w.id}]` },
+      factTarget: { kind: "milestone", id: w.id },
       reasoning: buildReasoning(w, ageMonths),
       confidence: w.confidence,
       rawScore,

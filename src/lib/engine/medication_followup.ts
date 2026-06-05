@@ -25,6 +25,7 @@ import {
   type Kid as ContextKid,
   type ContextMedication,
   getKidMedications,
+  spineIdFromName,
 } from "../context.js";
 import type { Candidate } from "./types.js";
 
@@ -89,6 +90,7 @@ export function medicationFollowupCandidatesFor(
 
   const ageStr = formatAge(kid.dob, asOf);
   const ageMonths = ageInMonths(kid.dob, asOf);
+  const kidSpineId = contextKid.id ?? kid.spineId ?? spineIdFromName(kid.name);
   const candidates: Candidate[] = [];
 
   for (const med of medications) {
@@ -138,6 +140,7 @@ export function medicationFollowupCandidatesFor(
       suggestedAction,
       triggerSource: "lookahead",
       triggerDetail,
+      citedRecord: { kidSpineId, path: `medical.medications[${slug}]` },
       reasoning,
       confidence,
       rawScore,

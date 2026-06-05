@@ -123,8 +123,64 @@ export function loadFamilyContext(path: string = DEFAULT_PATH): LoadResult {
 // Typed accessors — pull out exactly what engines need, with empty defaults
 // =============================================================================
 
+/**
+ * Derive a stable spine id from a kid's name when no explicit one is set
+ * (e.g. "Clem Pelletier" → "clem"). Used as a fallback by add-kid and the
+ * engines when a DB row predates the `spine_id` column. The first name is
+ * lowercased and stripped to a safe slug; family_context.json ids like
+ * "clem"/"jude" are expected to match.
+ */
+export function spineIdFromName(name: string): string {
+  const first = name.trim().split(/\s+/)[0] ?? name;
+  return first
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 export function getKid(context: FamilyContext, id: string): Kid | null {
   return context.kids.find((k) => k.id === id) ?? null;
+}
+
+/**
+ * Sentinel kid spine id for family-level / cross-product items that have no
+ * single owning kid (citedRecord.kidSpineId === "" and kidId === null). Shared
+ * by the reaction + correction paths so the resolution policy can't drift.
+ */
+export const FAMILY_SPINE_ID = "family";
+
+/** Minimal shape of a cited spine record (mirrors schema's CitedRecord). */
+type CitedRecordLike = { kidSpineId: string; path: string };
+
+/** DB lookup of a kid's spine_id / name by integer id, injectable for tests. */
+type KidRowLookup = (kidId: number) => { name: string | null; spineId: string | null } | null;
+
+/**
+ * Resolve the spine id a reaction/correction should write under. Policy
+ * (single source of truth for both reactions.ts and correct.ts):
+ *   1. citedRecord.kidSpineId, when set (non-empty).
+ *   2. the kids row's spine_id, else a slug from its name.
+ *   3. FAMILY_SPINE_ID for genuine family-level items (no cited spine id AND
+ *      no kid id) — these are suppression-only; there is no kid record to
+ *      fact-update or quarantine.
+ * Throws only when a kid-level item (kidId set) truly can't be resolved.
+ */
+export function resolveKidSpineId(
+  citedRecord: CitedRecordLike | null,
+  kidId: number | null,
+  lookupKid: KidRowLookup,
+): string {
+  if (citedRecord?.kidSpineId) return citedRecord.kidSpineId;
+
+  if (kidId !== null) {
+    const row = lookupKid(kidId);
+    if (row?.spineId) return row.spineId;
+    if (row?.name) return spineIdFromName(row.name);
+    throw new Error(`resolveKidSpineId: kid id=${kidId} has no spine_id or name to resolve`);
+  }
+
+  // No cited spine id and no kid id → genuine family-level item.
+  return FAMILY_SPINE_ID;
 }
 
 export function getKidByName(context: FamilyContext, name: string): Kid | null {

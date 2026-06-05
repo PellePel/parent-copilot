@@ -1,5 +1,7 @@
 import type {
+  CitedRecord,
   ConfidenceLevel,
+  FactTarget,
   TriggerSource,
 } from "../db/schema.js";
 
@@ -30,4 +32,19 @@ export type Candidate = {
    * The assembler boosts the score; the polish prompt uses it for voice.
    */
   relatedToCurrentEdge?: string;
+  /**
+   * Machine-readable pointer back to the exact spine record this candidate
+   * reasoned from: the kid's spine id plus a human-readable spine path (e.g.
+   * `patterns.eating.allergen_introduction_status`). Required — every engine
+   * stamps it. Reactions read this (not the coarse triggerDetail) so quarantine
+   * and suppression target a concrete record.
+   */
+  citedRecord: CitedRecord;
+  /**
+   * The deterministic clean-case mutation a "Handled" reaction would apply,
+   * when one exists (allergen introduced, milestone cleared, well-visit done).
+   * Left undefined for suppression-only engines that have no unambiguous spine
+   * target to mutate.
+   */
+  factTarget?: FactTarget;
 };
