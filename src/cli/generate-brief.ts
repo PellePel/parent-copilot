@@ -38,6 +38,7 @@ import {
   type Kid as ContextKid,
 } from "../lib/context.js";
 import { isoDate, today } from "../lib/validators.js";
+import { deliverBrief } from "../lib/deliver.js";
 import type { Candidate } from "../lib/engine/types.js";
 
 const program = new Command()
@@ -245,3 +246,20 @@ writeBriefLog(logPath, log);
 console.log("");
 console.log(`Wrote ${markdownPath} (brief id=${assembled.brief.id}, ${assembled.items.length} items).`);
 console.log(`Wrote ${logPath} (latency=${log.latency_ms}ms, polish_tokens=${polishUsage.input_tokens}+${polishUsage.output_tokens}, cross_tokens=${crossProductsUsage.input_tokens}+${crossProductsUsage.output_tokens}).`);
+
+// 6. Deliver to Telegram. Skipped under --dry-run (which already exited above,
+// but guard anyway). Degrades gracefully when the bot isn't configured —
+// mirrors the calendar not_configured branch.
+if (!opts.dryRun) {
+  const total = assembled.items.length;
+  const delivery = await deliverBrief(assembled.items);
+  if (delivery.notConfigured) {
+    console.warn(
+      "Telegram not configured — skipping delivery (set TELEGRAM_BOT_TOKEN/CHAT_ID/CALLBACK_SECRET in .env).",
+    );
+  } else {
+    console.log(
+      `Delivered ${delivery.delivered}/${total} items to Telegram (${delivery.failed} failed).`,
+    );
+  }
+}
