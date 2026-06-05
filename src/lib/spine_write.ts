@@ -275,6 +275,11 @@ export async function applySpineDiff(
 
 type Segment = { kind: "key"; key: string } | { kind: "index"; index: number };
 
+// Prototype-pollution guard: a correction path must never name these keys, or a
+// hallucinated/malicious path like "__proto__.isAdmin" would walk into and
+// mutate Object.prototype via setAtPath.
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 /** Parse dot/bracket notation into ordered segments. */
 function parsePath(path: string): Segment[] {
   const segments: Segment[] = [];
@@ -285,6 +290,9 @@ function parsePath(path: string): Segment[] {
   while ((match = re.exec(path)) !== null) {
     consumed = re.lastIndex;
     if (match[1] !== undefined) {
+      if (FORBIDDEN_KEYS.has(match[1])) {
+        throw new Error(`applySpineDiff: forbidden path segment "${match[1]}" (prototype pollution)`);
+      }
       segments.push({ kind: "key", key: match[1] });
     } else if (match[2] !== undefined) {
       segments.push({ kind: "index", index: Number(match[2]) });
@@ -333,6 +341,13 @@ function assertWithinKidSubtree(segments: Segment[], kidSpineId: string): void {
 
 /** Set `value` at the segment path, creating intermediate containers. */
 function setAtPath(root: Json, segments: Segment[], value: unknown): void {
+  // Defense-in-depth: reject forbidden keys here too, so any caller that walks a
+  // path to SET (not just applySpineDiff's parsePath) can't pollute the prototype.
+  for (const seg of segments) {
+    if (seg.kind === "key" && FORBIDDEN_KEYS.has(seg.key)) {
+      throw new Error(`setAtPath: forbidden path segment "${seg.key}" (prototype pollution)`);
+    }
+  }
   let cursor: unknown = root;
   for (let i = 0; i < segments.length - 1; i++) {
     const seg = segments[i]!;

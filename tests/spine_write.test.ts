@@ -149,6 +149,25 @@ test("applySpineDiff sets a kid-relative path", async () => {
   assert.equal(eating["schedule"], "3 meals + 2 snacks");
 });
 
+test("applySpineDiff rejects prototype-pollution path segments (no global pollution)", async () => {
+  const path = tempSpine();
+  const before = readFileSync(path, "utf8");
+
+  await assert.rejects(
+    applySpineDiff(KID, "__proto__.polluted", true, path),
+    /forbidden|prototype/i,
+  );
+  await assert.rejects(
+    applySpineDiff(KID, "constructor.prototype.polluted", true, path),
+    /forbidden|prototype/i,
+  );
+
+  // Object.prototype must be untouched: a fresh object has no `polluted` key.
+  assert.equal(({} as Record<string, unknown>)["polluted"], undefined);
+  // Spine left intact (rejected before any write).
+  assert.equal(readFileSync(path, "utf8"), before, "spine untouched on rejected pollution path");
+});
+
 test("applySpineDiff rejects an out-of-subtree (root key) path", async () => {
   const path = tempSpine();
   await assert.rejects(

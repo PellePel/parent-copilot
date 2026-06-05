@@ -150,6 +150,44 @@ test("measurement_band: drops at band N, keeps once a newer measurement crosses 
   assert.equal(filterCandidates([c], { asOf: AS_OF, contextPath: spinePath }).length, 1);
 });
 
+test("measurement_band: a same-day LARGER measurement crosses the band (resurfaces)", () => {
+  clearTables();
+  // Suppressed at clothing band 24mo, recorded 2026-01-01.
+  insertSuppression("outgrowing:clothing", "measurement_band", {
+    type: "clothing_size_months",
+    value: 24,
+    measuredOn: "2026-01-01",
+  });
+  const c = candidate({
+    triggerDetail: "outgrowing:clothing",
+    citedRecord: { kidSpineId: KID_SPINE, path: "gear.clothing_size" },
+  });
+
+  // The band measurement itself (same date, same value) must NOT resurface it.
+  raw
+    .prepare(
+      "INSERT INTO measurements (kid_id, type, value, unit, measured_on) VALUES (?, ?, ?, ?, ?)",
+    )
+    .run(KID_DB_ID, "clothing_size_months", 24, "months", "2026-01-01");
+  assert.equal(
+    filterCandidates([c], { asOf: AS_OF, contextPath: spinePath }).length,
+    0,
+    "the band measurement itself does not cross (value not > band)",
+  );
+
+  // A LARGER measurement logged on the SAME date as the band → crosses → resurface.
+  raw
+    .prepare(
+      "INSERT INTO measurements (kid_id, type, value, unit, measured_on) VALUES (?, ?, ?, ?, ?)",
+    )
+    .run(KID_DB_ID, "clothing_size_months", 36, "months", "2026-01-01");
+  assert.equal(
+    filterCandidates([c], { asOf: AS_OF, contextPath: spinePath }).length,
+    1,
+    "same-day larger measurement crosses the band",
+  );
+});
+
 test("measurement_band: with NO measurement stays suppressed (dropped)", () => {
   clearTables();
   insertSuppression("outgrowing:shoes", "measurement_band", {

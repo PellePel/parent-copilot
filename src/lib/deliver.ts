@@ -74,10 +74,11 @@ export async function deliverBrief(
     }
 
     if (result.status === "ok") {
-      await db
+      db
         .update(briefItems)
         .set({ telegramMessageId: result.messageId, deliveredAt: todayIso() })
-        .where(eq(briefItems.id, item.id));
+        .where(eq(briefItems.id, item.id))
+        .run();
       delivered++;
     } else {
       // Still failing after retries — leave deliveredAt null (R4).

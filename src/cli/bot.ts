@@ -44,6 +44,19 @@ import {
 const WRONG_PROMPT = "What did I get wrong about your kid?";
 
 /**
+ * A stable, PII-free label for an error. We log the error's class name (and a
+ * grammY error code when present) but NOT its message body — error messages can
+ * embed children's data, spine paths, or raw model output (F10).
+ */
+function errLabel(err: unknown): string {
+  if (err instanceof Error) {
+    const code = (err as { error_code?: number }).error_code;
+    return code !== undefined ? `${err.name}[code=${code}]` : err.name;
+  }
+  return typeof err;
+}
+
+/**
  * The user-facing toast text for a reaction result. Pure + tiny, but it's the
  * one bit of branching worth pinning down without a live bot, so it's exported
  * for a unit test.
@@ -101,6 +114,9 @@ async function main(): Promise<void> {
   });
 
   // --- Reaction taps --------------------------------------------------------
+  // The handler body is wrapped so that answerCallbackQuery is ALWAYS called
+  // (even on a thrown error) — otherwise the user's client spins forever waiting
+  // for the ack. The reflection (edit/strip/prompt) is best-effort after the ack.
   bot.callbackQuery(/^r:/, async (ctx) => {
     const verified = verifyCallback(ctx.callbackQuery.data, secret);
     if (!verified) {
@@ -110,86 +126,110 @@ async function main(): Promise<void> {
     }
 
     const messageId = ctx.callbackQuery.message?.message_id;
-    const result = await applyReaction(
-      verified.briefItemId,
-      verified.reaction,
-      ctx.callbackQuery.id, // idempotency key
-    );
+
+    let result: ReactionResult;
+    try {
+      result = await applyReaction(
+        verified.briefItemId,
+        verified.reaction,
+        ctx.callbackQuery.id, // idempotency key
+      );
+    } catch (err) {
+      // Containment: never leave the tap un-acked. Log a stable label only.
+      console.error(`bot: applyReaction failed (briefItemId=${verified.briefItemId})`, errLabel(err));
+      await ctx.answerCallbackQuery({ text: "Something went wrong — try again." });
+      return;
+    }
 
     // Mandatory ack, with a short toast.
     await ctx.answerCallbackQuery({ text: toastFor(result) });
 
     if (messageId === undefined) return; // nothing to reflect onto
 
-    switch (result.kind) {
-      case "reveal_reasoning":
-        // Show the reasoning but LEAVE the keyboard — the user may still react.
-        await editItemAfterReaction(messageId, `Why this surfaced:\n\n${result.reasoning}`);
-        break;
+    // Reflection is best-effort: a failure here must not crash the listener.
+    try {
+      switch (result.kind) {
+        case "reveal_reasoning":
+          // Show the reasoning but LEAVE the keyboard — the user may still react.
+          await editItemAfterReaction(messageId, `Why this surfaced:\n\n${result.reasoning}`);
+          break;
 
-      case "quarantined": {
-        // Terminal for the keyboard; collect the correction via force-reply and
-        // remember the prompt's message id on the reaction row so the reply
-        // handler can find it.
-        await removeItemKeyboard(messageId);
-        const promptMessageId = await promptForReply(WRONG_PROMPT);
-        db.update(reactions)
-          .set({ promptMessageId })
-          .where(eq(reactions.id, result.reactionId))
-          .run();
-        break;
+        case "quarantined": {
+          // Terminal for the keyboard; collect the correction via force-reply and
+          // remember the prompt's message id on the reaction row so the reply
+          // handler can find it.
+          await removeItemKeyboard(messageId);
+          const promptMessageId = await promptForReply(WRONG_PROMPT);
+          db.update(reactions)
+            .set({ promptMessageId })
+            .where(eq(reactions.id, result.reactionId))
+            .run();
+          break;
+        }
+
+        case "fact_updated":
+        case "suppressed":
+          // Handled / already-knew: the item is done — strip the keyboard so
+          // re-taps are blocked.
+          await removeItemKeyboard(messageId);
+          break;
+
+        case "noop_duplicate":
+          // A re-tap of an already-recorded reaction. The toast already told the
+          // user; leave the message as-is.
+          break;
       }
-
-      case "fact_updated":
-      case "suppressed":
-        // Handled / already-knew: the item is done — strip the keyboard so
-        // re-taps are blocked.
-        await removeItemKeyboard(messageId);
-        break;
-
-      case "noop_duplicate":
-        // A re-tap of an already-recorded reaction. The toast already told the
-        // user; leave the message as-is.
-        break;
+    } catch (err) {
+      console.error(`bot: reflection failed (reactionId=${result.reactionId})`, errLabel(err));
     }
   });
 
   // --- Correction replies ---------------------------------------------------
+  // Wrapped so a throw can't kill the long-polling listener.
   bot.on("message:text", async (ctx) => {
-    const replyToId = ctx.message.reply_to_message?.message_id;
-    if (replyToId === undefined) return; // not a reply → ignore
+    try {
+      const replyToId = ctx.message.reply_to_message?.message_id;
+      if (replyToId === undefined) return; // not a reply → ignore
 
-    const replyMessageId = ctx.message.message_id;
+      const replyMessageId = ctx.message.message_id;
 
-    // FIRST-WRITE-WINS: only an unfilled, still-pending row anchored on this
-    // exact prompt accepts the correction. The WHERE clause does the gating, so
-    // a concurrent/duplicate reply is a no-op (0 rows changed).
-    const updated = db
-      .update(reactions)
-      .set({ correctionText: ctx.message.text, replyMessageId })
-      .where(
-        and(
-          eq(reactions.promptMessageId, replyToId),
-          eq(reactions.appliedStatus, "pending"),
-          isNull(reactions.correctionText),
-        ),
-      )
-      .returning({ id: reactions.id })
-      .all();
+      // FIRST-WRITE-WINS: only an unfilled, still-pending row anchored on this
+      // exact prompt accepts the correction. The WHERE clause does the gating, so
+      // a concurrent/duplicate reply is a no-op (0 rows changed).
+      const updated = db
+        .update(reactions)
+        .set({ correctionText: ctx.message.text, replyMessageId })
+        .where(
+          and(
+            eq(reactions.promptMessageId, replyToId),
+            eq(reactions.appliedStatus, "pending"),
+            isNull(reactions.correctionText),
+          ),
+        )
+        .returning({ id: reactions.id })
+        .all();
 
-    if (updated.length === 0) {
-      // No matching prompt, already captured, or already applied → ignore.
-      return;
+      if (updated.length === 0) {
+        // No matching prompt, already captured, or already applied → ignore.
+        return;
+      }
+
+      const reactionId = updated[0]!.id;
+      await ctx.reply("Thanks — noted.");
+
+      // Off the hot path: the only LLM call in the loop runs fire-and-forget so it
+      // doesn't block the listener's event-loop tick.
+      void applyCorrection(reactionId).catch((err) => {
+        console.error(`bot: applyCorrection failed (reactionId=${reactionId})`, errLabel(err));
+      });
+    } catch (err) {
+      console.error("bot: message:text handler failed", errLabel(err));
     }
+  });
 
-    const reactionId = updated[0]!.id;
-    await ctx.reply("Thanks — noted.");
-
-    // Off the hot path: the only LLM call in the loop runs fire-and-forget so it
-    // doesn't block the listener's event-loop tick.
-    void applyCorrection(reactionId).catch((err) => {
-      console.error(`applyCorrection(${reactionId}) failed:`, err);
-    });
+  // Backstop: catch anything the per-handler guards miss so the process survives.
+  bot.catch((err) => {
+    console.error("bot: unhandled error in update handler", errLabel(err));
   });
 
   // --- Lifecycle ------------------------------------------------------------

@@ -142,6 +142,47 @@ export function getKid(context: FamilyContext, id: string): Kid | null {
   return context.kids.find((k) => k.id === id) ?? null;
 }
 
+/**
+ * Sentinel kid spine id for family-level / cross-product items that have no
+ * single owning kid (citedRecord.kidSpineId === "" and kidId === null). Shared
+ * by the reaction + correction paths so the resolution policy can't drift.
+ */
+export const FAMILY_SPINE_ID = "family";
+
+/** Minimal shape of a cited spine record (mirrors schema's CitedRecord). */
+type CitedRecordLike = { kidSpineId: string; path: string };
+
+/** DB lookup of a kid's spine_id / name by integer id, injectable for tests. */
+type KidRowLookup = (kidId: number) => { name: string | null; spineId: string | null } | null;
+
+/**
+ * Resolve the spine id a reaction/correction should write under. Policy
+ * (single source of truth for both reactions.ts and correct.ts):
+ *   1. citedRecord.kidSpineId, when set (non-empty).
+ *   2. the kids row's spine_id, else a slug from its name.
+ *   3. FAMILY_SPINE_ID for genuine family-level items (no cited spine id AND
+ *      no kid id) — these are suppression-only; there is no kid record to
+ *      fact-update or quarantine.
+ * Throws only when a kid-level item (kidId set) truly can't be resolved.
+ */
+export function resolveKidSpineId(
+  citedRecord: CitedRecordLike | null,
+  kidId: number | null,
+  lookupKid: KidRowLookup,
+): string {
+  if (citedRecord?.kidSpineId) return citedRecord.kidSpineId;
+
+  if (kidId !== null) {
+    const row = lookupKid(kidId);
+    if (row?.spineId) return row.spineId;
+    if (row?.name) return spineIdFromName(row.name);
+    throw new Error(`resolveKidSpineId: kid id=${kidId} has no spine_id or name to resolve`);
+  }
+
+  // No cited spine id and no kid id → genuine family-level item.
+  return FAMILY_SPINE_ID;
+}
+
 export function getKidByName(context: FamilyContext, name: string): Kid | null {
   const target = name.toLowerCase();
   return (

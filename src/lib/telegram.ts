@@ -90,7 +90,10 @@ export function getBot(): Bot {
 }
 
 // --- Signed callback data ---------------------------------------------------
-const SIG_BYTES = 10; // 10 raw HMAC bytes → 14 base64url chars (no padding).
+// 128-bit signature. 16 raw HMAC bytes → 22 base64url chars (no padding).
+// Byte budget for the longest callback_data: "r:" (2) + up-to-7-digit id (7) +
+// ":" (1) + "handled" (7, longest code) + ":" (1) + 22 = 40 bytes ≤ 64.
+const SIG_BYTES = 16;
 
 function secretFromEnv(): string {
   const secret = process.env.TELEGRAM_CALLBACK_SECRET;

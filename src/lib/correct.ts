@@ -32,11 +32,11 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, desc } from "drizzle-orm";
 import { z } from "zod";
 
 import { todayIso } from "./age.js";
-import { getKid, loadFamilyContext, spineIdFromName } from "./context.js";
+import { getKid, loadFamilyContext, resolveKidSpineId } from "./context.js";
 import { db } from "./db/index.js";
 import {
   briefItems,
@@ -116,30 +116,17 @@ type Options = {
 };
 
 // =============================================================================
-// kidSpineId resolution (mirrors U7's approach)
+// kidSpineId resolution (shared policy in context.ts — see resolveKidSpineId)
 // =============================================================================
 
-/**
- * Prefer the citedRecord's spine id, else the kids row's spine_id, else derive
- * a slug from the kid's name. Throw if nothing resolves — never partial-write.
- */
-function resolveKidSpineId(citedRecord: CitedRecord | null, kidId: number | null): string {
-  if (citedRecord?.kidSpineId) return citedRecord.kidSpineId;
-
-  if (kidId !== null) {
-    const row = db
+/** DB lookup of a kid row's name + spine_id by integer id (for resolveKidSpineId). */
+function lookupKidRow(kidId: number): { name: string | null; spineId: string | null } | null {
+  return (
+    db
       .select({ name: kidsTable.name, spineId: kidsTable.spineId })
       .from(kidsTable)
       .where(eq(kidsTable.id, kidId))
-      .get();
-    if (row?.spineId) return row.spineId;
-    if (row?.name) return spineIdFromName(row.name);
-  }
-
-  throw new Error(
-    `applyCorrection: cannot resolve kidSpineId (citedRecord=${JSON.stringify(
-      citedRecord,
-    )}, kidId=${kidId})`,
+      .get() ?? null
   );
 }
 
@@ -210,7 +197,7 @@ export async function applyCorrection(
   if (!citedRecord) {
     return park(reactionId, `brief item ${item.id} has no citedRecord to correct`);
   }
-  const kidSpineId = resolveKidSpineId(citedRecord, item.kidId);
+  const kidSpineId = resolveKidSpineId(citedRecord, item.kidId, lookupKidRow);
   const currentValue = readCurrentValue(kidSpineId, citedRecord.path, opts.contextPath);
 
   // --- 3. Ask Claude for a structured, path-scoped diff. --------------------
@@ -250,10 +237,30 @@ export async function applyCorrection(
   for (const q of activeQuarantines(kidSpineId)) {
     if (q.recordPath === citedRecord.path) liftQuarantine(q.id);
   }
-  db.update(factualErrors)
-    .set({ resolvedAt: todayIso() })
-    .where(eq(factualErrors.briefItemId, reaction.briefItemId))
-    .run();
+  // Resolve only THIS reaction's unresolved factual_error — not every open error
+  // for the brief item (F7). Match on briefItemId + unresolved, prefer a row
+  // whose cited record matches the corrected one, and resolve the single
+  // most-recent matching row.
+  const openErrors = db
+    .select({ id: factualErrors.id, citedRecord: factualErrors.citedRecord })
+    .from(factualErrors)
+    .where(
+      and(
+        eq(factualErrors.briefItemId, reaction.briefItemId),
+        isNull(factualErrors.resolvedAt),
+      ),
+    )
+    .orderBy(desc(factualErrors.id))
+    .all();
+  const target =
+    openErrors.find((e) => (e.citedRecord as CitedRecord | null)?.path === citedRecord.path) ??
+    openErrors[0]; // fall back to the most-recent unresolved row for this item
+  if (target) {
+    db.update(factualErrors)
+      .set({ resolvedAt: todayIso() })
+      .where(eq(factualErrors.id, target.id))
+      .run();
+  }
   db.update(reactions).set({ appliedStatus: "applied" }).where(eq(reactions.id, reactionId)).run();
 
   return { status: "applied" };
@@ -344,17 +351,16 @@ async function requestDiff(
     }
     toolInput = toolBlock.input;
   } catch (err) {
-    console.warn(
-      `Correct: Anthropic API call failed (${err instanceof Error ? err.message : String(err)}). Parking.`,
-    );
+    // F10: log a stable label only — raw model/API error bodies can leak the
+    // payload (children's data / spine paths) we sent.
+    console.warn(`Correct: Anthropic API call failed (${err instanceof Error ? err.name : "error"}). Parking.`);
     return null;
   }
 
   const parsed = CorrectionDiff.safeParse(toolInput);
   if (!parsed.success) {
-    console.warn(
-      `Correct: tool response failed schema validation (${parsed.error.issues[0]?.message}). Parking.`,
-    );
+    // F10: don't log issue messages (they can echo the offending value).
+    console.warn("Correct: tool response failed schema validation. Parking.");
     return null;
   }
   return parsed.data;

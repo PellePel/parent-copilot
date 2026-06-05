@@ -108,6 +108,18 @@ test("deliverBrief: maps each item to one send and stamps message id + delivered
   for (const id of [1, 2, 3]) {
     assert.ok(rows.get(id)!.deliveredAt, `item ${id} should have delivered_at set`);
   }
+
+  // F1: read the persisted row through a FRESH raw better-sqlite3 connection —
+  // independent of the ORM query builder's lazy/thenable semantics — to prove
+  // the delivery stamp actually committed to disk (would be null if the update
+  // chain were never .run()).
+  const probe = new Database(dbPath, { readonly: true });
+  const persisted = probe
+    .prepare("SELECT telegram_message_id, delivered_at FROM brief_items WHERE id = 1")
+    .get() as { telegram_message_id: number | null; delivered_at: string | null };
+  probe.close();
+  assert.equal(persisted.telegram_message_id, 100, "telegram_message_id persisted to disk");
+  assert.ok(persisted.delivered_at, "delivered_at persisted to disk");
 });
 
 test("deliverBrief: retries on error, then counts failed and leaves delivered_at null", async () => {

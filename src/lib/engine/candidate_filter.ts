@@ -155,9 +155,11 @@ function isClearedish(status: string): boolean {
  * measurement_band re-validation. revalidationParams shape:
  *   { type: MeasurementType, value: number, measuredOn: ISODate }
  * captured at suppression time (the band the item fired at). The condition
- * lapses — KEEP — once a NEWER measurement of that type has crossed the band:
- * a row with `measuredOn` strictly after the stored date AND a `value` past
- * the recorded threshold. No qualifying measurement (including none at all)
+ * lapses — KEEP — once a measurement of that type has crossed the band: a row
+ * with `measuredOn` on OR after the stored date AND a `value` strictly greater
+ * than the recorded threshold. The strict `value >` excludes the band
+ * measurement itself (its value equals bandValue), so a same-day LARGER reading
+ * still resurfaces the item. No qualifying measurement (including none at all)
  * means the band still holds → DROP.
  */
 function measurementBandStillHolds(
@@ -183,7 +185,7 @@ function measurementBandStillHolds(
   if (rows.length === 0) return true;
 
   const crossed = rows.some(
-    (m) => (bandDate ? m.measuredOn > bandDate : true) && m.value > bandValue,
+    (m) => (bandDate ? m.measuredOn >= bandDate : true) && m.value > bandValue,
   );
   // Crossed → condition lapsed → KEEP (does NOT still hold).
   return !crossed;

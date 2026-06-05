@@ -36,15 +36,15 @@ import {
   type RevalidationKind,
 } from "./db/schema.js";
 import {
+  FAMILY_SPINE_ID,
   getKid,
   loadFamilyContext,
-  spineIdFromName,
+  resolveKidSpineId,
 } from "./context.js";
 import {
   markAllergenIntroduced,
   clearMilestone,
   addThingWeAlreadyKnow,
-  advanceWellVisitDue,
   quarantineRecord,
 } from "./spine_write.js";
 
@@ -100,8 +100,9 @@ export async function applyReaction(
   const citedRecord = item.citedRecord as CitedRecord | null;
   const factTarget = item.factTarget as FactTarget | null;
   const triggerDetail = item.triggerDetail ?? "";
-  const kidSpineId = resolveKidSpineId(citedRecord, item.kidId, opts.contextPath);
+  const kidSpineId = resolveKidSpineId(citedRecord, item.kidId, lookupKidRow);
   const contextPath = opts.contextPath;
+  const isFamilyLevel = kidSpineId === FAMILY_SPINE_ID;
 
   // --- 3. Dispatch by reaction. ---------------------------------------------
   switch (reaction) {
@@ -112,7 +113,8 @@ export async function applyReaction(
     case "handled": {
       upsertSuppression(kidSpineId, triggerDetail, reactionId, factTarget, contextPath);
       let detail: string | null = null;
-      if (factTarget) {
+      // Family-level items have no kid record to fact-update — suppression only.
+      if (factTarget && !isFamilyLevel) {
         detail = await applyFactTarget(kidSpineId, factTarget, contextPath);
       }
       // North-star proxy: a "Handled" tap is a candidate anticipatory-delight moment.
@@ -125,7 +127,8 @@ export async function applyReaction(
     case "already_knew": {
       upsertSuppression(kidSpineId, triggerDetail, reactionId, factTarget, contextPath);
       // For developmental items, mirror the "we already know this" into the spine.
-      if (factTarget?.kind === "milestone") {
+      // Family-level items have no kid subtree to write — suppression only.
+      if (factTarget?.kind === "milestone" && !isFamilyLevel) {
         await clearMilestone(kidSpineId, factTarget.id, contextPath);
         await addThingWeAlreadyKnow(kidSpineId, factTarget.id, contextPath);
       }
@@ -139,12 +142,33 @@ export async function applyReaction(
           `applyReaction: "wrong" on item ${briefItemId} has no citedRecord to quarantine`,
         );
       }
-      quarantineRecord(kidSpineId, citedRecord.path, "user flagged wrong");
-      db.insert(factualErrors)
-        .values({ briefItemId, kidSpineId, citedRecord, resolvedAt: null })
-        .run();
-      // Park the correction for U8 (the async LLM applier).
-      db.update(reactions).set({ appliedStatus: "pending" }).where(eq(reactions.id, reactionId)).run();
+      // Family-level items have no kid record to quarantine or auto-correct. Log
+      // the factual_error against the family sentinel, flip the reaction status,
+      // but DO NOT quarantine (there's no kid subtree) and DO NOT park for the
+      // LLM correction path. Tell the user we noted it but can't auto-correct.
+      if (isFamilyLevel) {
+        db.transaction(() => {
+          db.insert(factualErrors)
+            .values({ briefItemId, kidSpineId, citedRecord, resolvedAt: null })
+            .run();
+          db.update(reactions)
+            .set({ appliedStatus: "n/a" })
+            .where(eq(reactions.id, reactionId))
+            .run();
+        });
+        return { kind: "fact_updated", detail: "noted; can't auto-correct family-level items", reactionId };
+      }
+
+      // Kid-level "wrong": quarantine + log + park, atomically (F8) so a crash
+      // can't leave a live quarantine with the reaction stuck off-pending.
+      db.transaction(() => {
+        quarantineRecord(kidSpineId, citedRecord.path, "user flagged wrong");
+        db.insert(factualErrors)
+          .values({ briefItemId, kidSpineId, citedRecord, resolvedAt: null })
+          .run();
+        // Park the correction for U8 (the async LLM applier).
+        db.update(reactions).set({ appliedStatus: "pending" }).where(eq(reactions.id, reactionId)).run();
+      });
       return { kind: "quarantined", needsCorrection: true, reactionId };
     }
 
@@ -159,31 +183,14 @@ export async function applyReaction(
 // kidSpineId resolution
 // =============================================================================
 
-/**
- * Prefer the citedRecord's spine id, else the kids row's spine_id, else derive
- * a slug from the kid's name. Throw if nothing resolves — never partial-write.
- */
-function resolveKidSpineId(
-  citedRecord: CitedRecord | null,
-  kidId: number | null,
-  contextPath?: string,
-): string {
-  if (citedRecord?.kidSpineId) return citedRecord.kidSpineId;
-
-  if (kidId !== null) {
-    const row = db
+/** DB lookup of a kid row's name + spine_id by integer id (for resolveKidSpineId). */
+function lookupKidRow(kidId: number): { name: string | null; spineId: string | null } | null {
+  return (
+    db
       .select({ name: kidsTable.name, spineId: kidsTable.spineId })
       .from(kidsTable)
       .where(eq(kidsTable.id, kidId))
-      .get();
-    if (row?.spineId) return row.spineId;
-    if (row?.name) return spineIdFromName(row.name);
-  }
-
-  throw new Error(
-    `applyReaction: cannot resolve kidSpineId (citedRecord=${JSON.stringify(
-      citedRecord,
-    )}, kidId=${kidId})`,
+      .get() ?? null
   );
 }
 
@@ -269,6 +276,13 @@ function deriveRevalidation(
     }
 
     case "absence":
+      // Well-visit / absence items: a tap can't supply the NEXT visit date, so a
+      // deterministic write would be a no-op that resurfaces immediately (F5).
+      // Stay suppressed `forever` — it won't resurface until the spine's visit
+      // data actually changes (when the user logs the real visit through the
+      // existing flow), at which point the citing record changes.
+      return { kind: "forever", params: null };
+
     case "vaccine_prep": {
       const date = nextWellVisitDate(kidSpineId, contextPath);
       if (date) return { kind: "until_date", params: { date } };
@@ -325,12 +339,16 @@ function nextWellVisitDate(kidSpineId: string, contextPath?: string): string | n
 // Spine fact mutation (clean-case deterministic targets)
 // =============================================================================
 
-/** Apply the deterministic spine mutator for a factTarget; return a human detail. */
+/**
+ * Apply the deterministic spine mutator for a factTarget; return a human detail,
+ * or null when the factTarget is suppression-only (no honest deterministic
+ * spine write a tap can make).
+ */
 async function applyFactTarget(
   kidSpineId: string,
   factTarget: FactTarget,
   contextPath?: string,
-): Promise<string> {
+): Promise<string | null> {
   switch (factTarget.kind) {
     case "allergen":
       await markAllergenIntroduced(kidSpineId, factTarget.allergen, contextPath);
@@ -338,11 +356,14 @@ async function applyFactTarget(
     case "milestone":
       await clearMilestone(kidSpineId, factTarget.id, contextPath);
       return `${factTarget.id} cleared`;
-    case "well_visit": {
-      const date = nextWellVisitDate(kidSpineId, contextPath);
-      if (date) await advanceWellVisitDue(kidSpineId, date, contextPath);
-      return "well visit recorded";
-    }
+    case "well_visit":
+      // A tap can't know the NEXT visit date, so there is no honest deterministic
+      // spine write here (writing the current date back is a no-op that resurfaces
+      // the item immediately). This is suppression-only; the spine's visit data
+      // changes when the user logs the actual visit through the existing flow.
+      // The absence-family revalidation is set to `forever` so it won't resurface
+      // until then (see deriveRevalidation).
+      return null;
     default: {
       const _exhaustive: never = factTarget;
       throw new Error(`applyFactTarget: unhandled factTarget ${JSON.stringify(_exhaustive)}`);

@@ -220,6 +220,47 @@ test("tell_more: returns reasoning, no DB / spine mutation", async () => {
   assert.equal(readFileSync(path, "utf8"), before, "spine untouched");
 });
 
+test("F5 — handled on a well_visit item: suppression-only (no spine write, no 'recorded' detail), revalidation forever", async () => {
+  const path = tempSpine();
+  const before = readFileSync(path, "utf8");
+  const id = seedBriefItem({
+    triggerDetail: "absence:well_visit",
+    citedRecord: { kidSpineId: KID_SPINE, path: "medical.next_well_visit" },
+    factTarget: { kind: "well_visit" },
+  });
+
+  const result = await applyReaction(id, "handled", `cb-wv-${id}`, { contextPath: path });
+  // A tap can't know the NEXT visit date → suppression-only, NOT fact_updated.
+  assert.equal(result.kind, "suppressed");
+  assert.equal(readFileSync(path, "utf8"), before, "well_visit tap does not write the spine");
+
+  const supp = raw
+    .prepare("SELECT revalidation_kind FROM suppressions WHERE trigger_detail = ? AND kid_spine_id = ?")
+    .get("absence:well_visit", KID_SPINE) as { revalidation_kind: string };
+  assert.equal(supp.revalidation_kind, "forever");
+});
+
+test("F4 — wrong on a family-level item (kidId null, empty kidSpineId): no throw, no quarantine, factual_error logged", async () => {
+  const path = tempSpine();
+  const id = seedBriefItem({
+    triggerDetail: "crossproduct",
+    citedRecord: { kidSpineId: "", path: "family.calendar" },
+    factTarget: null,
+    kidId: null,
+  });
+
+  // Must NOT throw despite empty kidSpineId + null kidId.
+  const result = await applyReaction(id, "wrong", `cb-fam-wrong-${id}`, { contextPath: path });
+  assert.equal(result.kind, "fact_updated");
+  assert.match((result as { detail: string }).detail, /can't auto-correct family-level/i);
+
+  // factual_error logged under the family sentinel, but NO quarantine and NOT parked.
+  assert.equal(count("factual_errors", "brief_item_id = ?", id), 1);
+  assert.equal(count("factual_errors", "brief_item_id = ? AND kid_spine_id = 'family'", id), 1);
+  assert.equal(count("quarantines", "record_path = ?", "family.calendar"), 0);
+  assert.equal(count("reactions", "brief_item_id = ? AND applied_status = 'pending'", id), 0);
+});
+
 test("idempotency: same telegramCallbackId twice → one suppression, one delight row", async () => {
   const path = tempSpine();
   const id = seedBriefItem({
