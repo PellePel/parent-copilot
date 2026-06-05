@@ -20,7 +20,7 @@
 import { z } from "zod";
 import { daysBetween, formatAge, todayIso } from "../age.js";
 import { type Kid as DbKid } from "../db/schema.js";
-import { type Kid as ContextKid } from "../context.js";
+import { type Kid as ContextKid, spineIdFromName } from "../context.js";
 import type { Candidate } from "./types.js";
 
 const FLAG_WITHIN_DAYS = 14; // spec: "well-visit is within 2 weeks"
@@ -119,6 +119,10 @@ export function vaccinePrepCandidatesFor(
       suggestedAction,
       triggerSource: "lookahead",
       triggerDetail: "vaccine_prep",
+      citedRecord: {
+        kidSpineId: contextKid.id ?? kid.spineId ?? spineIdFromName(kid.name),
+        path: "medical.notable_history",
+      },
       reasoning,
       confidence: "high",
       rawScore: 90,

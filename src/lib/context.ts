@@ -123,6 +123,21 @@ export function loadFamilyContext(path: string = DEFAULT_PATH): LoadResult {
 // Typed accessors — pull out exactly what engines need, with empty defaults
 // =============================================================================
 
+/**
+ * Derive a stable spine id from a kid's name when no explicit one is set
+ * (e.g. "Clem Pelletier" → "clem"). Used as a fallback by add-kid and the
+ * engines when a DB row predates the `spine_id` column. The first name is
+ * lowercased and stripped to a safe slug; family_context.json ids like
+ * "clem"/"jude" are expected to match.
+ */
+export function spineIdFromName(name: string): string {
+  const first = name.trim().split(/\s+/)[0] ?? name;
+  return first
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 export function getKid(context: FamilyContext, id: string): Kid | null {
   return context.kids.find((k) => k.id === id) ?? null;
 }

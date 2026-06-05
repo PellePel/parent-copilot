@@ -17,6 +17,7 @@ import {
   type Kid,
 } from "../db/schema.js";
 import { ageInMonths, daysBetween, formatAge, todayIso } from "../age.js";
+import { spineIdFromName } from "../context.js";
 import {
   CARSEAT_OUTGROWING,
   CLOTHING_OUTGROWING,
@@ -90,6 +91,7 @@ export function shoeOutgrowingCandidate(kid: Kid, asOf: string = todayIso()): Ca
       "Do a quick foot check this week — press the tip of the shoe to feel for the big toe, and look for red marks on the heel or sides.",
     triggerSource: "lookahead",
     triggerDetail: "outgrowing:shoes",
+    citedRecord: { kidSpineId: kid.spineId ?? spineIdFromName(kid.name), path: "gear.shoe_size" },
     reasoning:
       `gear_purchase event on ${lastPurchase.occurredOn} (item=shoes) was ${daysSince} ` +
       `days ago. Age=${ageMonths}mo falls in shoe band ${band.ageMonthsMin}-${band.ageMonthsMax}mo ` +
@@ -146,6 +148,7 @@ export function clothingOutgrowingCandidate(
     suggestedAction: `Spot-check a few items in ${sizeLabel}. If anything's tight at the shoulders, ankles, or waist, it's time to move to ${expectedLabel}.`,
     triggerSource: "lookahead",
     triggerDetail: "outgrowing:clothing",
+    citedRecord: { kidSpineId: kid.spineId ?? spineIdFromName(kid.name), path: "gear.clothing_size" },
     reasoning:
       `Latest clothing_size_months measurement: ${last.value} on ${last.measuredOn}. ` +
       `Current age=${ageMonths}mo. overage=${overageMonths}mo vs flag=${CLOTHING_OUTGROWING.flagAtOverageMonths}mo ` +
@@ -257,6 +260,7 @@ export function carseatOutgrowingCandidate(
         "Confirm against the seat's manual — check both the weight AND height limits, plus the expiration date — and plan the transition this week.",
       triggerSource: "lookahead",
       triggerDetail: "outgrowing:carseat",
+      citedRecord: { kidSpineId: kid.spineId ?? spineIdFromName(kid.name), path: "gear.car_seat" },
       reasoning:
         `Carseat from ${seat.occurredOn} has weight_limit_kg=${seat.weightLimitKg}. ` +
         `Latest weight=${latestWeight.value}kg on ${latestWeight.measuredOn} (kid was ` +
@@ -289,6 +293,7 @@ export function carseatOutgrowingCandidate(
       "Confirm against the seat's manual (weight AND height limits, plus expiration) and start looking at the next-stage seat now so you have time to compare.",
     triggerSource: "lookahead",
     triggerDetail: "outgrowing:carseat",
+    citedRecord: { kidSpineId: kid.spineId ?? spineIdFromName(kid.name), path: "gear.car_seat" },
     reasoning:
       `Carseat from ${seat.occurredOn} has weight_limit_kg=${seat.weightLimitKg}. ` +
       `Latest weight=${latestWeight.value}kg on ${latestWeight.measuredOn} (kid was ` +

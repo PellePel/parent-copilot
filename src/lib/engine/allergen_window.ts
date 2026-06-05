@@ -21,7 +21,7 @@
 import { z } from "zod";
 import { ageInMonths, formatAge, todayIso } from "../age.js";
 import { type Kid as DbKid } from "../db/schema.js";
-import { type Kid as ContextKid } from "../context.js";
+import { type Kid as ContextKid, spineIdFromName } from "../context.js";
 import type { Candidate } from "./types.js";
 
 const STANDARD_ALLERGENS = [
@@ -103,6 +103,12 @@ export function allergenWindowCandidatesFor(
   // Higher priority in start mode (window narrowing fast).
   const rawScore = startMode ? 82 : 70;
 
+  // The specific allergen this item nudges THIS week is the first still-missing
+  // one in standard order (`missing[0]` — `peanut` in start mode, matching the
+  // suggested action). A "Handled" tap means "I introduced that one", so the
+  // clean fact-update target names exactly that allergen.
+  const nextAllergen = missing[0]!;
+
   return [
     {
       kidId: kid.id,
@@ -111,6 +117,11 @@ export function allergenWindowCandidatesFor(
       suggestedAction,
       triggerSource: "lookahead",
       triggerDetail: startMode ? "allergen:start" : "allergen:continue",
+      citedRecord: {
+        kidSpineId: contextKid.id ?? kid.spineId ?? spineIdFromName(kid.name),
+        path: "patterns.eating.allergen_introduction_status",
+      },
+      factTarget: { kind: "allergen", allergen: nextAllergen },
       reasoning,
       confidence: "high",
       rawScore,
