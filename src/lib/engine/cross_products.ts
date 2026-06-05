@@ -39,6 +39,7 @@ import {
   type Event,
 } from "../db/schema.js";
 import { firedInLast } from "./suppression.js";
+import { redactQuarantined } from "./candidate_filter.js";
 import type { Candidate } from "./types.js";
 
 const MODEL = "claude-sonnet-4-5";
@@ -294,7 +295,12 @@ export async function crossProductCandidatesFor(
   const snapshot = options.familyContext
     ? {
         as_of: asOf,
-        family_context: buildContextPayload(options.familyContext, kids, asOf),
+        // Redact actively-quarantined subtrees so the LLM can't reason off a
+        // "wrong"-flagged fact. Operates on a deep copy — the loaded context is
+        // left intact for the rest of the brief run.
+        family_context: redactQuarantined(
+          buildContextPayload(options.familyContext, kids, asOf),
+        ),
         upcoming_events: upcomingEvents.map((e) => ({
           id: e.id,
           summary: e.summary,

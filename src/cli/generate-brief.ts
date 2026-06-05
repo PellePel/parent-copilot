@@ -17,6 +17,7 @@ import { allergenWindowCandidatesFor } from "../lib/engine/allergen_window.js";
 import { medicationFollowupCandidatesFor } from "../lib/engine/medication_followup.js";
 import { crossProductCandidatesFor } from "../lib/engine/cross_products.js";
 import { annotateWithEdges } from "../lib/engine/current_edges.js";
+import { filterCandidates } from "../lib/engine/candidate_filter.js";
 import { polishCandidates } from "../lib/engine/polish.js";
 import { assembleBrief } from "../lib/engine/assembler.js";
 import { renderConsole, renderMarkdown } from "../lib/engine/render.js";
@@ -176,6 +177,22 @@ annotateWithEdges(candidates, (kidId) => {
 const edgeAnnotated = candidates.filter((c) => c.relatedToCurrentEdge).length;
 if (edgeAnnotated > 0) {
   console.log(`Current edges: ${edgeAnnotated} candidate(s) tagged for priority boost.`);
+}
+
+// Suppression + quarantine chokepoint (U6). Drops candidates that are actively
+// suppressed (re-validated, not permanent) or cite a quarantined record. Runs
+// after collection + edge annotation, before the assembler. Additive — coexists
+// with the engines' own firedInLast / context suppression. Mutate the array in
+// place so the dry-run preview, assembler, and log all see the filtered set.
+const beforeFilter = candidates.length;
+const kept = filterCandidates(candidates, { asOf });
+candidates.length = 0;
+candidates.push(...kept);
+const droppedByFilter = beforeFilter - candidates.length;
+if (droppedByFilter > 0) {
+  console.log(
+    `Suppression/quarantine: dropped ${droppedByFilter} candidate(s); ${candidates.length} remain.`,
+  );
 }
 
 console.log(
