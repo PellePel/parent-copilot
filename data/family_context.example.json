@@ -84,7 +84,7 @@
         },
         "last_well_visit": "YYYY-MM-DD",
         "last_well_visit_type": "2-year",
-        "next_well_visit_due": "~YYYY-MM-DD",
+        "next_well_visit": { "date": "YYYY-MM-DD", "type": "<next visit type>" },
         "allergies": [],
         "conditions": [],
         "medications": [
