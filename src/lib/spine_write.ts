@@ -196,14 +196,19 @@ export async function clearMilestone(
   await mutateSpine(kidSpineId, contextPath, (_root, kid) => {
     const dev = ensureObject(kid, "developmental");
     const milestones = dev["milestones"];
-    if (!Array.isArray(milestones)) {
-      throw new Error(`kid "${kidSpineId}" has no developmental.milestones[]`);
+    const match = Array.isArray(milestones)
+      ? milestones.find((m) => isObject(m) && m["milestone"] === milestoneId)
+      : undefined;
+    if (isObject(match)) {
+      // Milestone already recorded — mark it cleared.
+      match["status"] = "cleared";
+    } else {
+      // Window fired before any milestone row exists (the common "entering the
+      // window" case). Record it as known so the developmental engine's
+      // context suppression stops surfacing it — don't fail the reaction.
+      const known = ensureStringArray(dev, "things_we_already_know");
+      if (!known.includes(milestoneId)) known.push(milestoneId);
     }
-    const match = milestones.find((m) => isObject(m) && m["milestone"] === milestoneId);
-    if (!isObject(match)) {
-      throw new Error(`no milestone with id="${milestoneId}" for kid "${kidSpineId}"`);
-    }
-    match["status"] = "cleared";
     return dev;
   });
 }

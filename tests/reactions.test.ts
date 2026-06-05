@@ -176,6 +176,26 @@ test("already_knew: suppression but NO delight row", async () => {
   assert.ok((dev["things_we_already_know"] as string[]).includes("simple_sentences_3_4_words"));
 });
 
+test("handled: developmental window with NO recorded milestone is recorded, not thrown", async () => {
+  // Regression: an "entering the window" item (e.g. solids_introduction_window)
+  // has no milestone row in the spine yet. Handled must not throw; it records
+  // the window in things_we_already_know so the engine stops surfacing it.
+  const path = tempSpine();
+  const id = seedBriefItem({
+    triggerDetail: "developmental:solids_introduction_window",
+    citedRecord: { kidSpineId: KID_SPINE, path: "developmental.milestones[solids_introduction_window]" },
+    factTarget: { kind: "milestone", id: "solids_introduction_window" },
+  });
+
+  const result = await applyReaction(id, "handled", `cb-dev-absent-${id}`, { contextPath: path });
+  assert.ok(result.kind === "fact_updated" || result.kind === "suppressed");
+
+  const dev = kidOf(path)["developmental"] as Record<string, unknown>;
+  assert.ok((dev["things_we_already_know"] as string[]).includes("solids_introduction_window"));
+  assert.equal(count("suppressions", "trigger_detail = ?", "developmental:solids_introduction_window"), 1);
+  assert.equal(count("delight_candidates", "brief_item_id = ?", id), 1);
+});
+
 test("wrong: active quarantine + factual_errors row + reaction appliedStatus pending", async () => {
   const path = tempSpine();
   const id = seedBriefItem({
