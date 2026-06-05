@@ -52,12 +52,15 @@ import {
 // Result shape — tells the bot what to show
 // =============================================================================
 
+// Every variant carries the reaction row id so the bot (U5) can bind follow-up
+// state to it: set promptMessageId on a quarantine, or hand it to applyCorrection.
+// For noop_duplicate it's the PRIOR row's id (the one that won the idempotency race).
 export type ReactionResult =
-  | { kind: "suppressed" }
-  | { kind: "fact_updated"; detail: string }
-  | { kind: "quarantined"; needsCorrection: true }
-  | { kind: "reveal_reasoning"; reasoning: string }
-  | { kind: "noop_duplicate" };
+  | { kind: "suppressed"; reactionId: number }
+  | { kind: "fact_updated"; detail: string; reactionId: number }
+  | { kind: "quarantined"; needsCorrection: true; reactionId: number }
+  | { kind: "reveal_reasoning"; reasoning: string; reactionId: number }
+  | { kind: "noop_duplicate"; reactionId: number };
 
 type Options = {
   /** Spine path override for tests; defaults to data/family_context.json. */
@@ -80,7 +83,7 @@ export async function applyReaction(
     .from(reactions)
     .where(eq(reactions.telegramCallbackId, telegramCallbackId))
     .get();
-  if (prior) return { kind: "noop_duplicate" };
+  if (prior) return { kind: "noop_duplicate", reactionId: prior.id };
 
   // Insert the reaction row up front — the idempotency anchor.
   const inserted = db
@@ -104,7 +107,7 @@ export async function applyReaction(
   switch (reaction) {
     case "tell_more":
       // No mutation; reveal why the item fired.
-      return { kind: "reveal_reasoning", reasoning: item.reasoning };
+      return { kind: "reveal_reasoning", reasoning: item.reasoning, reactionId };
 
     case "handled": {
       upsertSuppression(kidSpineId, triggerDetail, reactionId, factTarget, contextPath);
@@ -114,7 +117,9 @@ export async function applyReaction(
       }
       // North-star proxy: a "Handled" tap is a candidate anticipatory-delight moment.
       db.insert(delightCandidates).values({ briefItemId, kidSpineId, triggerDetail }).run();
-      return detail ? { kind: "fact_updated", detail } : { kind: "suppressed" };
+      return detail
+        ? { kind: "fact_updated", detail, reactionId }
+        : { kind: "suppressed", reactionId };
     }
 
     case "already_knew": {
@@ -125,7 +130,7 @@ export async function applyReaction(
         await addThingWeAlreadyKnow(kidSpineId, factTarget.id, contextPath);
       }
       // NO delight row — "already knew" isn't an anticipatory-delight signal.
-      return { kind: "suppressed" };
+      return { kind: "suppressed", reactionId };
     }
 
     case "wrong": {
@@ -140,7 +145,7 @@ export async function applyReaction(
         .run();
       // Park the correction for U8 (the async LLM applier).
       db.update(reactions).set({ appliedStatus: "pending" }).where(eq(reactions.id, reactionId)).run();
-      return { kind: "quarantined", needsCorrection: true };
+      return { kind: "quarantined", needsCorrection: true, reactionId };
     }
 
     default: {

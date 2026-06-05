@@ -185,7 +185,9 @@ test("wrong: active quarantine + factual_errors row + reaction appliedStatus pen
   });
 
   const result = await applyReaction(id, "wrong", `cb-wrong-${id}`, { contextPath: path });
-  assert.deepEqual(result, { kind: "quarantined", needsCorrection: true });
+  assert.equal(result.kind, "quarantined");
+  assert.equal((result as { needsCorrection: boolean }).needsCorrection, true);
+  assert.equal(typeof result.reactionId, "number");
 
   assert.equal(
     count("quarantines", "record_path = ? AND active = 1", "medical.medications[0]"),
@@ -206,10 +208,12 @@ test("tell_more: returns reasoning, no DB / spine mutation", async () => {
   });
 
   const result = await applyReaction(id, "tell_more", `cb-tm-${id}`, { contextPath: path });
-  assert.deepEqual(result, {
-    kind: "reveal_reasoning",
-    reasoning: "kid is in the typical walking window",
-  });
+  assert.equal(result.kind, "reveal_reasoning");
+  assert.equal(
+    (result as { reasoning: string }).reasoning,
+    "kid is in the typical walking window",
+  );
+  assert.equal(typeof result.reactionId, "number");
 
   assert.equal(count("suppressions", "trigger_detail = ?", "developmental:walking"), 0);
   assert.equal(count("delight_candidates", "brief_item_id = ?", id), 0);
@@ -229,7 +233,9 @@ test("idempotency: same telegramCallbackId twice → one suppression, one deligh
   const second = await applyReaction(id, "handled", cb, { contextPath: path });
 
   assert.equal(first.kind, "fact_updated");
-  assert.deepEqual(second, { kind: "noop_duplicate" });
+  assert.equal(second.kind, "noop_duplicate");
+  // noop_duplicate surfaces the PRIOR (winning) row's id.
+  assert.equal(second.reactionId, first.reactionId);
 
   assert.equal(count("suppressions", "trigger_detail = ? AND kid_spine_id = ?", "allergen_window", KID_SPINE), 1);
   assert.equal(count("delight_candidates", "brief_item_id = ?", id), 1);
