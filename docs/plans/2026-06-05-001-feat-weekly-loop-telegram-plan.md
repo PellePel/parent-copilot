@@ -1,7 +1,7 @@
 ---
 title: "feat: Weekly loop — Telegram delivery + reaction→spine feedback"
 type: feat
-status: active
+status: completed
 date: 2026-06-05
 origin: docs/brainstorms/2026-06-05-weekly-loop-requirements.md
 ---
