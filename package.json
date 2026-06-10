@@ -12,6 +12,7 @@
     "generate-brief": "tsx --env-file=.env src/cli/generate-brief.ts",
     "auth:google": "tsx --env-file=.env src/cli/auth-google.ts",
     "bot": "tsx --env-file=.env src/cli/bot.ts",
+    "web": "tsx --env-file=.env src/cli/web.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
