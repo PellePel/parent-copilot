@@ -245,6 +245,7 @@ const OUTGROWING_MEASUREMENT: Record<string, MeasurementType> = {
   shoes: "shoe_size_us",
   clothing: "clothing_size_months",
   carseat: "weight_kg",
+  sleep_sack: "weight_kg",
 };
 
 function deriveRevalidation(

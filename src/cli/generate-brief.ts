@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { Command } from "commander";
 import { listKids } from "../lib/kids.js";
 import { outgrowingCandidatesFor } from "../lib/engine/outgrowing.js";
+import { sleepSackCandidatesFor } from "../lib/engine/gear_threshold.js";
 import { developmentalCandidatesFor } from "../lib/engine/developmental.js";
 import { absenceCandidatesFor } from "../lib/engine/absence.js";
 import { vaccinePrepCandidatesFor } from "../lib/engine/vaccine_prep.js";
@@ -142,6 +143,7 @@ const candidates: Candidate[] = [];
 for (const kid of kids) {
   const contextKid = contextKidFor(kid.name);
   candidates.push(...outgrowingCandidatesFor(kid, asOf));
+  candidates.push(...sleepSackCandidatesFor(kid, contextKid, asOf));
   candidates.push(...developmentalCandidatesFor(kid, asOf, { contextKid }));
   // Context-driven engines (silent if no context kid matched)
   candidates.push(...vaccinePrepCandidatesFor(kid, contextKid, asOf));
