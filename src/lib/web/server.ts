@@ -10,15 +10,17 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { buildWeekView } from "../engine/week_view.js";
 import { renderWeekHtml } from "./render_week.js";
+import { handleReact, handleCorrect } from "./handlers.js";
 import { todayIso } from "../age.js";
 
 export const DEFAULT_WEB_PORT = 4317;
 
-export function handleRequest(req: IncomingMessage, res: ServerResponse): void {
+export async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const method = req.method ?? "GET";
 
-    if (req.method === "GET" && url.pathname === "/") {
+    if (method === "GET" && url.pathname === "/") {
       // ?asOf= overrides the week for debugging/testing; defaults to today.
       const asOf = url.searchParams.get("asOf") ?? todayIso();
       const wv = buildWeekView(asOf);
@@ -26,13 +28,18 @@ export function handleRequest(req: IncomingMessage, res: ServerResponse): void {
       return;
     }
 
+    if (method === "POST" && url.pathname === "/react") return await handleReact(req, res);
+    if (method === "POST" && url.pathname === "/correct") return await handleCorrect(req, res);
+
     res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
   } catch (err) {
-    res.writeHead(500, { "Content-Type": "text/plain" }).end("Internal error");
+    if (!res.headersSent) res.writeHead(500, { "Content-Type": "text/plain" }).end("Internal error");
     console.error("web request error:", err);
   }
 }
 
 export function createWebServer(): Server {
-  return createServer(handleRequest);
+  return createServer((req, res) => {
+    void handleRequest(req, res);
+  });
 }

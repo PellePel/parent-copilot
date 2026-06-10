@@ -8,7 +8,24 @@
  * (reactions, notes, done) are layered on in later units.
  */
 
+import { randomUUID } from "node:crypto";
 import type { WeekView, WeekViewItem, NoteActionView } from "../engine/week_view.js";
+
+/** The four reaction controls (R6) — clear labels replacing the confusing buttons. */
+function controls(briefItemId: number): string {
+  return `
+    <div class="controls" data-brief-item="${briefItemId}" data-nonce="${randomUUID()}">
+      <button data-react="handled">Handled</button>
+      <button data-react="already_knew">Already knew</button>
+      <button data-react="tell_more">Why this?</button>
+      <button data-react="wrong">Wrong</button>
+      <div class="correction" hidden>
+        <textarea rows="2" placeholder="What is actually true?"></textarea>
+        <button data-correct>Send correction</button>
+      </div>
+      <span class="ack" role="status"></span>
+    </div>`;
+}
 
 export function escapeHtml(s: string): string {
   return s
@@ -37,6 +54,7 @@ function heroCard(hero: WeekViewItem | null): string {
     <h1>${escapeHtml(hero.headline)}</h1>
     <p class="body">${escapeHtml(hero.body)}</p>
     ${actionLine(hero)}
+    ${controls(hero.briefItemId)}
   </section>`;
 }
 
@@ -49,6 +67,7 @@ function moreList(items: WeekViewItem[]): string {
       <div class="row-head">${kidTag(it)} <strong>${escapeHtml(it.headline)}</strong></div>
       <p class="body">${escapeHtml(it.body)}</p>
       ${actionLine(it)}
+      ${controls(it.briefItemId)}
     </li>`,
     )
     .join("");
@@ -63,6 +82,7 @@ function stripList(items: WeekViewItem[]): string {
     <li data-brief-item="${it.briefItemId}">
       ${kidTag(it)} <strong>${escapeHtml(it.headline)}</strong>
       <p class="body">${escapeHtml(it.body)}</p>
+      ${controls(it.briefItemId)}
     </li>`,
     )
     .join("");
@@ -106,7 +126,55 @@ const STYLE = `
     background:#f6e9df; border-radius:999px; padding:1px 9px; margin-right:6px; vertical-align:1px; }
   .kid.family { color:var(--muted); background:#eee9e1; }
   .strip .body, .more .body { color:var(--muted); font-size:15px; }
+  .controls { margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .controls button { font:inherit; font-size:13px; padding:5px 12px; border:1px solid var(--line);
+    background:#fff; color:var(--ink); border-radius:999px; cursor:pointer; }
+  .controls button:hover { border-color:var(--accent); color:var(--accent); }
+  .controls button:disabled { opacity:.45; cursor:default; }
+  .correction { flex-basis:100%; display:flex; gap:8px; margin-top:6px; }
+  .correction textarea { flex:1; font:inherit; font-size:14px; padding:8px; border:1px solid var(--line); border-radius:8px; resize:vertical; }
+  .ack { flex-basis:100%; color:var(--accent); font-size:13px; min-height:1em; }
 `;
+
+// Vanilla client: posts reactions/corrections, disables controls after use,
+// and reveals the correction box for "wrong". No framework, no build step.
+// Kept apostrophe-free so it embeds cleanly in the template literal.
+const SCRIPT = `
+<script>
+document.querySelectorAll('.controls').forEach(function(box){
+  var id = Number(box.dataset.briefItem), nonce = box.dataset.nonce;
+  var ack = box.querySelector('.ack'), reactionId = null;
+  function post(url, payload){
+    return fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) })
+      .then(function(r){ return r.json(); });
+  }
+  function lock(){ box.querySelectorAll('button[data-react]').forEach(function(b){ b.disabled = true; }); }
+  function unlock(){ box.querySelectorAll('button[data-react]').forEach(function(b){ b.disabled = false; }); }
+  box.querySelectorAll('button[data-react]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var reaction = btn.dataset.react;
+      lock();
+      post('/react', { briefItemId:id, reaction:reaction, nonce:nonce }).then(function(res){
+        if(!res || !res.ok){ ack.textContent = 'That did not take.'; unlock(); return; }
+        reactionId = res.reactionId;
+        if(reaction === 'tell_more'){ ack.textContent = res.reasoning || 'No extra detail.'; unlock(); return; }
+        if(reaction === 'wrong'){ box.querySelector('.correction').hidden = false; ack.textContent = 'What should it say?'; return; }
+        ack.textContent = reaction === 'handled' ? 'Got it.' : 'Noted.';
+      }).catch(function(){ ack.textContent = 'Network hiccup.'; unlock(); });
+    });
+  });
+  var cbtn = box.querySelector('button[data-correct]');
+  if(cbtn){ cbtn.addEventListener('click', function(){
+    var ta = box.querySelector('textarea'), text = (ta.value || '').trim();
+    if(!text || reactionId == null) return;
+    cbtn.disabled = true;
+    post('/correct', { reactionId:reactionId, text:text }).then(function(res){
+      ack.textContent = (res && res.ok) ? 'Thanks, I will fix that.' : 'Could not save that.';
+      box.querySelector('.correction').hidden = true;
+    }).catch(function(){ ack.textContent = 'Network hiccup.'; cbtn.disabled = false; });
+  }); }
+});
+</script>`;
 
 export function renderWeekHtml(wv: WeekView): string {
   const heading = wv.weekOf ? `Week of ${escapeHtml(wv.weekOf)}` : "This week";
@@ -122,5 +190,5 @@ export function renderWeekHtml(wv: WeekView): string {
   ${actionsList(wv.actions)}
   ${moreList(wv.more)}
   ${stripList(wv.strip)}
-</main></body></html>`;
+</main>${SCRIPT}</body></html>`;
 }
