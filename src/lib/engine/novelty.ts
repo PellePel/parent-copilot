@@ -23,11 +23,22 @@ const NOVELTY_BASE = 100;
 const PENALTY_PER_APPEARANCE = 25;
 
 /**
- * 0–100, higher = more novel. A candidate not seen in the window scores
+ * 0–100, higher = more novel. An item not seen in prior weeks scores
  * `NOVELTY_BASE`; each prior weekly appearance subtracts `PENALTY_PER_APPEARANCE`,
- * flooring at 0. Family-level candidates (`kidId === null`) are handled.
+ * flooring at 0. The current week is excluded so a freshly-persisted item never
+ * penalizes itself. Family-level items (`kidId === null`) and missing
+ * triggerDetail are handled.
  */
-export function noveltyScore(c: Candidate, asOf: string): number {
-  const count = recentFireCount(c.kidId, c.triggerDetail, NOVELTY_WEEKS_BACK, asOf);
+export function noveltyScoreFor(
+  kidId: number | null,
+  triggerDetail: string | null,
+  asOf: string,
+): number {
+  if (!triggerDetail) return NOVELTY_BASE;
+  const count = recentFireCount(kidId, triggerDetail, NOVELTY_WEEKS_BACK, asOf, { before: asOf });
   return Math.max(0, NOVELTY_BASE - count * PENALTY_PER_APPEARANCE);
+}
+
+export function noveltyScore(c: Candidate, asOf: string): number {
+  return noveltyScoreFor(c.kidId, c.triggerDetail, asOf);
 }
