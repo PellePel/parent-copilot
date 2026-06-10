@@ -281,10 +281,49 @@ export const delightCandidates = sqliteTable("delight_candidates", {
 });
 
 // =============================================================================
+// Note-derived actions (the note → forecast → action loop)
+// =============================================================================
+// A note compounds into a forecast + recommended action. The raw note is
+// persisted immediately; an async LLM step fills forecast/action/kind and,
+// for weight-keyed notes, BOTH a `surface_on_or_after` date (≈2 weeks before
+// the projected crossing) AND a `clear_when` measurement band (auto-clear once
+// the weight actually crosses) — both on one row, honoring AE2. `completed_at`
+// is the selective "done?" state, set only for one_shot actions (U7).
+export const ACTION_KINDS = ["ambient", "one_shot"] as const;
+export type ActionKind = (typeof ACTION_KINDS)[number];
+
+/** Auto-clear condition: the action stops surfacing once the kid's measurement
+ * of `type` reaches `value`. */
+export type ClearWhen = { type: MeasurementType; value: number };
+
+export const noteActions = sqliteTable(
+  "note_actions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    kidSpineId: text("kid_spine_id"), // null = family-level note
+    sourceNote: text("source_note").notNull(),
+    // Derived fields — null until the async derivation lands (or if it fails).
+    forecastText: text("forecast_text"),
+    actionText: text("action_text"),
+    actionKind: text("action_kind", { enum: ACTION_KINDS }),
+    surfaceOnOrAfter: text("surface_on_or_after"), // ISO date; null = surface now
+    clearWhen: text("clear_when", { mode: "json" }).$type<ClearWhen | null>(),
+    completedAt: text("completed_at"), // set only for one_shot, only via "done?"
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    activeIdx: index("note_actions_active_idx").on(t.completedAt),
+  }),
+);
+
+// =============================================================================
 // Type exports for app code
 // =============================================================================
 export type Kid = typeof kids.$inferSelect;
 export type NewKid = typeof kids.$inferInsert;
+
+export type NoteAction = typeof noteActions.$inferSelect;
+export type NewNoteAction = typeof noteActions.$inferInsert;
 
 export type Measurement = typeof measurements.$inferSelect;
 export type NewMeasurement = typeof measurements.$inferInsert;
