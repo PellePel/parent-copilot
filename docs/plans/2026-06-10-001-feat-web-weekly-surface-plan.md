@@ -1,7 +1,7 @@
 ---
 title: "feat: Copilot web weekly surface (pivot from Telegram broadcast)"
 type: feat
-status: active
+status: completed
 date: 2026-06-10
 origin: docs/brainstorms/2026-06-10-web-weekly-surface-requirements.md
 ---
