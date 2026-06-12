@@ -238,6 +238,38 @@ export async function sendItem(
   }
 }
 
+/**
+ * Send the single Sunday nudge (U8 web pivot) — plain text, no reaction
+ * keyboard, no HMAC. Same non-throwing status union and dry-run handling as
+ * sendItem, which is now vestigial for the web flow (kept for the bot listener
+ * era; engagement happens on the week-view page).
+ */
+export async function sendNudge(
+  text: string,
+  dryRun: boolean = !!process.env.COPILOT_TELEGRAM_DRYRUN,
+): Promise<SendResult> {
+  let config: TelegramConfig;
+  try {
+    config = loadConfig();
+  } catch (err) {
+    if (err instanceof TelegramNotConfiguredError) {
+      return { status: "not_configured", reason: err.message };
+    }
+    return { status: "error", reason: err instanceof Error ? err.message : String(err) };
+  }
+
+  if (dryRun) {
+    return { status: "ok", messageId: -1 };
+  }
+
+  try {
+    const sent = await getBot().api.sendMessage(config.chatId, text);
+    return { status: "ok", messageId: sent.message_id };
+  } catch (err) {
+    return { status: "error", reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // --- Message-edit helpers (used by the bot listener, U5) --------------------
 // Thin wrappers around bot.api. They need a live bot, so they are NOT
 // unit-tested.
