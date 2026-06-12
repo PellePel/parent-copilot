@@ -10,7 +10,8 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { buildWeekView } from "../engine/week_view.js";
 import { renderWeekHtml } from "./render_week.js";
-import { handleReact, handleCorrect } from "./handlers.js";
+import { handleReact, handleCorrect, handleNote, handleDone } from "./handlers.js";
+import { getActiveNoteActions } from "../note_action.js";
 import { todayIso } from "../age.js";
 
 export const DEFAULT_WEB_PORT = 4317;
@@ -23,13 +24,15 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
     if (method === "GET" && url.pathname === "/") {
       // ?asOf= overrides the week for debugging/testing; defaults to today.
       const asOf = url.searchParams.get("asOf") ?? todayIso();
-      const wv = buildWeekView(asOf);
+      const wv = buildWeekView(asOf, { actions: getActiveNoteActions(asOf) });
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(renderWeekHtml(wv));
       return;
     }
 
     if (method === "POST" && url.pathname === "/react") return await handleReact(req, res);
     if (method === "POST" && url.pathname === "/correct") return await handleCorrect(req, res);
+    if (method === "POST" && url.pathname === "/note") return await handleNote(req, res);
+    if (method === "POST" && url.pathname === "/done") return await handleDone(req, res);
 
     res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
   } catch (err) {

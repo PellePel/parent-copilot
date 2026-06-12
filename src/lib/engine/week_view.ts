@@ -51,12 +51,16 @@ export type NoteActionView = {
   actionKind: "ambient" | "one_shot";
 };
 
+/** A kid the note form can attach a note to. */
+export type KidRef = { spineId: string; name: string };
+
 export type WeekView = {
   weekOf: string | null;
   hero: WeekViewItem | null;
   more: WeekViewItem[];
   strip: WeekViewItem[];
   actions: NoteActionView[];
+  kids: KidRef[];
 };
 
 function rankByNoveltyThenPriority(a: WeekViewItem, b: WeekViewItem): number {
@@ -70,6 +74,14 @@ export function buildWeekView(
 ): WeekView {
   const actions = opts.actions ?? [];
 
+  const kidRows = db
+    .select({ id: kidsTable.id, name: kidsTable.name, spineId: kidsTable.spineId })
+    .from(kidsTable)
+    .all();
+  const kids: KidRef[] = kidRows
+    .filter((k): k is typeof k & { spineId: string } => k.spineId !== null)
+    .map((k) => ({ spineId: k.spineId, name: k.name }));
+
   // Most recent brief at or before asOf.
   const brief = db
     .select()
@@ -79,11 +91,11 @@ export function buildWeekView(
     .get();
 
   if (!brief) {
-    return { weekOf: null, hero: null, more: [], strip: [], actions };
+    return { weekOf: null, hero: null, more: [], strip: [], actions, kids };
   }
 
   const rows = db.select().from(briefItems).where(eq(briefItems.briefId, brief.id)).all();
-  const kidName = new Map(db.select({ id: kidsTable.id, name: kidsTable.name }).from(kidsTable).all().map((k) => [k.id, k.name]));
+  const kidName = new Map(kidRows.map((k) => [k.id, k.name]));
 
   const items: WeekViewItem[] = rows.map((r) => ({
     briefItemId: r.id,
@@ -118,5 +130,6 @@ export function buildWeekView(
     more,
     strip: calendar,
     actions,
+    kids,
   };
 }

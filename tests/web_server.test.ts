@@ -40,6 +40,14 @@ raw.exec(`
     related_to_current_edge TEXT, telegram_message_id INTEGER, delivered_at TEXT,
     cited_record TEXT, fact_target TEXT
   );
+  CREATE TABLE note_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kid_spine_id TEXT, source_note TEXT NOT NULL,
+    forecast_text TEXT, action_text TEXT, action_kind TEXT,
+    surface_on_or_after TEXT, clear_when TEXT, completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX note_actions_active_idx ON note_actions (completed_at);
 `);
 raw.prepare("INSERT INTO kids (id, name, dob, spine_id) VALUES (?, ?, ?, ?)").run(1, "Jude", "2025-12-07", "jude");
 

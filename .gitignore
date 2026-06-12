@@ -33,3 +33,4 @@
 
 # Generated briefs — canonical record lives in the SQLite briefs/brief_items tables
 /briefs
+data/*.bak*

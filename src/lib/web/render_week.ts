@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { WeekView, WeekViewItem, NoteActionView } from "../engine/week_view.js";
+import type { WeekView, WeekViewItem, NoteActionView, KidRef } from "../engine/week_view.js";
 
 /** The four reaction controls (R6) — clear labels replacing the confusing buttons. */
 function controls(briefItemId: number): string {
@@ -97,10 +97,28 @@ function actionsList(actions: NoteActionView[]): string {
     <li data-note-action="${a.id}" data-kind="${a.actionKind}">
       <p class="forecast">${escapeHtml(a.forecastText)}</p>
       <p class="action">→ ${escapeHtml(a.actionText)}</p>
+      ${a.actionKind === "one_shot" ? `<div class="controls"><button data-done="${a.id}">Done</button><span class="ack" role="status"></span></div>` : ""}
     </li>`,
     )
     .join("");
   return `<section class="actions"><h2>From your notes</h2><ul>${rows}</ul></section>`;
+}
+
+/** The notebook margin (R5): a note compounds into a forecast, never a stored receipt. */
+function noteForm(kids: KidRef[]): string {
+  const options = [`<option value="">Family</option>`]
+    .concat(kids.map((k) => `<option value="${escapeHtml(k.spineId)}">${escapeHtml(k.name)}</option>`))
+    .join("");
+  return `
+  <section class="note-form">
+    <h2>Leave a note</h2>
+    <div class="note-row">
+      <select id="note-kid">${options}</select>
+      <textarea id="note-text" rows="2" placeholder="Anything worth knowing ahead of time…"></textarea>
+      <button id="note-save">Save</button>
+    </div>
+    <span class="ack" id="note-ack" role="status"></span>
+  </section>`;
 }
 
 const STYLE = `
@@ -134,6 +152,14 @@ const STYLE = `
   .correction { flex-basis:100%; display:flex; gap:8px; margin-top:6px; }
   .correction textarea { flex:1; font:inherit; font-size:14px; padding:8px; border:1px solid var(--line); border-radius:8px; resize:vertical; }
   .ack { flex-basis:100%; color:var(--accent); font-size:13px; min-height:1em; }
+  .note-form { margin-top:36px; }
+  .note-row { display:flex; gap:8px; align-items:flex-start; }
+  .note-row select { font:inherit; font-size:14px; padding:8px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  .note-row textarea { flex:1; font:inherit; font-size:14px; padding:8px; border:1px solid var(--line); border-radius:8px; resize:vertical; }
+  .note-row button { font:inherit; font-size:14px; padding:8px 16px; border:1px solid var(--line); background:#fff;
+    color:var(--ink); border-radius:8px; cursor:pointer; }
+  .note-row button:hover { border-color:var(--accent); color:var(--accent); }
+  .note-row button:disabled { opacity:.45; cursor:default; }
 `;
 
 // Vanilla client: posts reactions/corrections, disables controls after use,
@@ -174,6 +200,40 @@ document.querySelectorAll('.controls').forEach(function(box){
     }).catch(function(){ ack.textContent = 'Network hiccup.'; cbtn.disabled = false; });
   }); }
 });
+document.querySelectorAll('button[data-done]').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    var li = btn.closest('li'), ack = li.querySelector('.ack');
+    btn.disabled = true;
+    fetch('/done', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ noteActionId: Number(btn.dataset.done) }) })
+      .then(function(r){ return r.json(); })
+      .then(function(res){
+        if(res && res.ok){ li.style.opacity = '.45'; ack.textContent = 'Done.'; }
+        else { ack.textContent = 'That did not take.'; btn.disabled = false; }
+      })
+      .catch(function(){ ack.textContent = 'Network hiccup.'; btn.disabled = false; });
+  });
+});
+(function(){
+  var save = document.getElementById('note-save');
+  if(!save) return;
+  var text = document.getElementById('note-text'), kid = document.getElementById('note-kid');
+  var ack = document.getElementById('note-ack');
+  save.addEventListener('click', function(){
+    var value = (text.value || '').trim();
+    if(!value) return;
+    save.disabled = true;
+    fetch('/note', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ text:value, kidSpineId: kid.value || undefined }) })
+      .then(function(r){ return r.json(); })
+      .then(function(res){
+        if(res && res.ok){ text.value = ''; ack.textContent = 'Noted. I will turn that into a plan.'; }
+        else { ack.textContent = 'That did not save.'; }
+        save.disabled = false;
+      })
+      .catch(function(){ ack.textContent = 'Network hiccup.'; save.disabled = false; });
+  });
+})();
 </script>`;
 
 export function renderWeekHtml(wv: WeekView): string {
@@ -190,5 +250,6 @@ export function renderWeekHtml(wv: WeekView): string {
   ${actionsList(wv.actions)}
   ${moreList(wv.more)}
   ${stripList(wv.strip)}
+  ${noteForm(wv.kids)}
 </main>${SCRIPT}</body></html>`;
 }
