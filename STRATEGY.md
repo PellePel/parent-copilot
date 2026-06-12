@@ -1,6 +1,6 @@
 ---
 name: Copilot
-last_updated: 2026-06-02
+last_updated: 2026-06-10
 ---
 
 # Copilot Strategy
@@ -47,10 +47,10 @@ _Why it serves the approach:_ Turns a one-shot read path into a system that comp
 ## Not working on
 
 - A tracker — no logging burden on the primary planner; we capture only what prediction requires.
-- A task manager — items are anticipations, not to-dos with assignments and completion.
+- A task manager — items are anticipations, not to-dos with assignments and completion. _(Amended 2026-06-10: one bounded exception — time-critical, one-shot actions, e.g. order-by-date or book-the-appt, may carry a light "done?" state. Tracking is a privilege the system grants per item, never the default state of every item.)_
 - A calendar — we read the family calendar, we don't replace it.
 - A medical tool — we surface facts and defer to the pediatrician; no diagnosis or dosing.
-- A chat surface — the channel is a notebook the user annotates, not a destination app.
+- A chat surface — the channel is a notebook the user annotates, not a destination app. _(Amended 2026-06-10: the brief moves to a push-triggered web "week view" — a destination the user pulls into once a week via a thin nudge, not a daily-open app and not a conversational surface to feed. Nudge-not-app is the discipline; see `docs/brainstorms/2026-06-10-web-weekly-surface-requirements.md`.)_
 
 ## Marketing
 

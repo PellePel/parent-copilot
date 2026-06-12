@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { Command } from "commander";
 import { listKids } from "../lib/kids.js";
 import { outgrowingCandidatesFor } from "../lib/engine/outgrowing.js";
+import { sleepSackCandidatesFor } from "../lib/engine/gear_threshold.js";
 import { developmentalCandidatesFor } from "../lib/engine/developmental.js";
 import { absenceCandidatesFor } from "../lib/engine/absence.js";
 import { vaccinePrepCandidatesFor } from "../lib/engine/vaccine_prep.js";
@@ -39,7 +40,7 @@ import {
   type Kid as ContextKid,
 } from "../lib/context.js";
 import { isoDate, today } from "../lib/validators.js";
-import { deliverBrief } from "../lib/deliver.js";
+import { deliverNudge } from "../lib/deliver.js";
 import type { Candidate } from "../lib/engine/types.js";
 
 const program = new Command()
@@ -142,6 +143,7 @@ const candidates: Candidate[] = [];
 for (const kid of kids) {
   const contextKid = contextKidFor(kid.name);
   candidates.push(...outgrowingCandidatesFor(kid, asOf));
+  candidates.push(...sleepSackCandidatesFor(kid, contextKid, asOf));
   candidates.push(...developmentalCandidatesFor(kid, asOf, { contextKid }));
   // Context-driven engines (silent if no context kid matched)
   candidates.push(...vaccinePrepCandidatesFor(kid, contextKid, asOf));
@@ -264,19 +266,19 @@ console.log("");
 console.log(`Wrote ${markdownPath} (brief id=${assembled.brief.id}, ${assembled.items.length} items).`);
 console.log(`Wrote ${logPath} (latency=${log.latency_ms}ms, polish_tokens=${polishUsage.input_tokens}+${polishUsage.output_tokens}, cross_tokens=${crossProductsUsage.input_tokens}+${crossProductsUsage.output_tokens}).`);
 
-// 6. Deliver to Telegram. Skipped under --dry-run (which already exited above,
-// but guard anyway). Degrades gracefully when the bot isn't configured —
-// mirrors the calendar not_configured branch.
+// 6. Send the single Sunday nudge linking into the local week view (U8 web
+// pivot — Telegram is only the link-carrier now). Skipped under --dry-run
+// (which already exited above, but guard anyway). Degrades gracefully when
+// the bot isn't configured — mirrors the calendar not_configured branch.
 if (!opts.dryRun) {
-  const total = assembled.items.length;
-  const delivery = await deliverBrief(assembled.items);
-  if (delivery.notConfigured) {
+  const nudge = await deliverNudge(assembled.brief.weekOf);
+  if (nudge.status === "not_configured") {
     console.warn(
-      "Telegram not configured — skipping delivery (set TELEGRAM_BOT_TOKEN/CHAT_ID/CALLBACK_SECRET in .env).",
+      "Telegram not configured — skipping the nudge (set TELEGRAM_BOT_TOKEN/CHAT_ID/CALLBACK_SECRET in .env).",
     );
+  } else if (nudge.status === "sent") {
+    console.log(`Sent the Sunday nudge (${nudge.itemCount} surfaced) → ${nudge.url}`);
   } else {
-    console.log(
-      `Delivered ${delivery.delivered}/${total} items to Telegram (${delivery.failed} failed).`,
-    );
+    console.warn("Nudge failed to send after retries — the week view is still available locally.");
   }
 }
